@@ -1,18 +1,18 @@
-//
-// Created by wwww on 2023/8/23.
-//
-
 #include <algorithm>
-#include <arpa/inet.h>
 #include <fcntl.h>
 #include <fmt/core.h>
 #include <protocol/http.h>
-#include <netinet/in.h>
 #include <sstream>
+#include <sys/stat.h>
+#ifdef WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/sendfile.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 using namespace std;
 namespace m::net::http {
@@ -135,9 +135,13 @@ auto Handler::write(int fd) -> IOState {
     m_last_alive_time = m_lazy_current_time;
     //  fmt::println("response is", m_response_buffer.s);
     while (m_response_buffer.write_index < m_response_buffer.s.size()) {
-        auto sent_bytes = send(fd, m_response_buffer.s.data() + m_response_buffer.write_index, m_response_buffer.s.size() - m_response_buffer.write_index, 0);
+        auto sent_bytes = send(fd, m_response_buffer.s.data() + m_response_buffer.write_index, static_cast<int>(m_response_buffer.s.size() - m_response_buffer.write_index), 0);
         if (sent_bytes < 0) {
+#ifdef _WIN32
+            if (WSAGetLastError() == WSAEWOULDBLOCK)
+#else
             if (errno == EAGAIN || errno == EWOULDBLOCK)
+#endif
                 return IOState::PENDING;
             return IOState::BAD;
             }
@@ -146,8 +150,34 @@ auto Handler::write(int fd) -> IOState {
         m_response_buffer.write_index += sent_bytes;
         }
     if (m_response_buffer.file_fd != -1) {
+#ifdef _WIN32
+        // Windows doesn't have sendfile, we need to implement a fallback
+        // This is a simplified version - for production you'd want proper buffering
+        const size_t chunk_size = 4096;
+        std::vector<char> buffer(chunk_size);
         while (m_response_buffer.file_write_index < m_response_buffer.file_size) {
-            auto sent_bytes = sendfile(fd, m_response_buffer.file_fd, &m_response_buffer.file_write_index, m_response_buffer.file_size - m_response_buffer.file_write_index);
+            // Seek to current position
+            _lseek(m_response_buffer.file_fd, static_cast<long>(m_response_buffer.file_write_index), SEEK_SET);
+            // Read chunk
+            auto read_bytes = _read(m_response_buffer.file_fd, buffer.data(),
+                                    static_cast<unsigned int>(std::min(chunk_size, m_response_buffer.file_size - m_response_buffer.file_write_index)));
+
+            if (read_bytes <= 0) {
+                break;
+                }
+            // Send chunk
+            auto sent_bytes = ::send(fd, buffer.data(), read_bytes, 0);
+            if (sent_bytes < 0) {
+                if (WSAGetLastError() == WSAEWOULDBLOCK)
+                    return IOState::PENDING;
+                return IOState::BAD;
+                }
+            m_response_buffer.file_write_index += sent_bytes;
+            }
+#else
+        while (m_response_buffer.file_write_index < m_response_buffer.file_size) {
+            auto sent_bytes = sendfile(fd, m_response_buffer.file_fd, &m_response_buffer.file_write_index,
+                                       m_response_buffer.file_size - m_response_buffer.file_write_index);
             if (sent_bytes < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     return IOState::PENDING;
@@ -156,6 +186,7 @@ auto Handler::write(int fd) -> IOState {
             else if (sent_bytes == 0)
                 return IOState::BAD;
             }
+#endif
         close(m_response_buffer.file_fd);
         }
     if (m_keep_alive) {

@@ -1,22 +1,21 @@
-//
-// Created by wwww on 2023/8/23.
-//
-
 #ifndef CPP_SIMPLE_WEB_SERVER_HTTP_HPP
 #define CPP_SIMPLE_WEB_SERVER_HTTP_HPP
-
 #include "rpc.h"
 #include <array>
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <netinet/in.h>
 #include <numeric>
 #include <shared_mutex>
 #include <string_view>
-#include <sys/epoll.h>
 #include <unordered_map>
 #include <vector>
+#ifdef WIN32
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#include <sys/epoll.h>
+#endif
 
 namespace m::net::http {
 using namespace std;
@@ -130,7 +129,6 @@ class EpollSelector {
 
 // read -> work -> write
 class Handler {
-    private:
         constexpr static size_t READ_BUFFER_SIZE = 2048;
         sockaddr_in m_addr;
         string m_read_buffer;

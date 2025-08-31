@@ -1,7 +1,3 @@
-//
-// Created by wwww on 2023/10/17.
-//
-
 #include <iostream>
 #include <protocol/http.h>
 #include <random>

@@ -4,11 +4,16 @@ project(thread)
 add_library(${PROJECT_NAME} INTERFACE)
 target_include_directories(${PROJECT_NAME} INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(${PROJECT_NAME}
-    PRIVATE
-    GTest::gtest
-    GTest::gtest_main
-    pthread
-)
-
-add_test(NAME thread_pool_test COMMAND thread_pool_test.cpp)
+if(THREAD_BUILD_TESTS)
+    add_executable(thread_pool_test thread_pool_test.cpp)
+    target_link_libraries(thread_pool_test
+        PRIVATE
+        ${PROJECT_NAME}
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        GTest::gmock_main
+        pthread
+    )
+    add_test(NAME thread_pool_test COMMAND thread_pool_test)
+endif()

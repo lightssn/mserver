@@ -62,6 +62,9 @@ template <typename T> class ThreadSafeQueue {
         ThreadSafeQueue() : head(new Node), tail(head.get()) {}
         ThreadSafeQueue(const ThreadSafeQueue &other) = delete;//禁止拷贝构造
         ThreadSafeQueue &operator=(const ThreadSafeQueue &other) = delete;//禁止赋值操作
+        ~ThreadSafeQueue() {
+            data_cond.notify_all();  // 防止线程阻塞在 wait_and_pop()
+        }
         unique_ptr<T> try_pop() {
             unique_ptr<Node> old_head = try_pop_head();
             return old_head ? old_head->data : unique_ptr<T>();
@@ -77,6 +80,9 @@ template <typename T> class ThreadSafeQueue {
         void wait_and_pop(T &value) {
             unique_ptr<Node> const old_head = wait_pop_head(value);
             }
+        void notify_all() {
+            data_cond.notify_all();  //唤醒所有等待线程
+        }
         void push(T new_value) {
             auto new_data = std::make_unique<T>(move(new_value));
             unique_ptr<Node> p(new Node);

@@ -1,23 +1,29 @@
-#ifndef CPP_SIMPLE_WEB_SERVER_THREAD_POOL_HPP
-#define CPP_SIMPLE_WEB_SERVER_THREAD_POOL_HPP
-#include <atomic>
-#include <functional>
+#ifndef THREAD_POOL_H
+#define THREAD_POOL_H
+#include "../common/stl.h"
 #include "thread_join.h"
 #include "thread_safe_queue.h"
 namespace m::thread {
+using std::atomic_bool;
+using std::vector;
+using std::queue;
+using std::thread;
+using std::function;
+using std::move;
+
 class ThreadPool {
-        std::atomic_bool m_done;//原子变量，是否完成
-        ThreadSafeQueue<std::function<void()>> m_work_queue;
-        std::vector<std::thread> m_threads;
+        atomic_bool m_done;//原子变量，是否完成
+        ThreadSafeQueue<function<void()>> _queue;
+        vector<thread> m_threads;
         size_t m_threads_count;
         JoinThreads m_joiner;
 
         //线程工作函数
         void worker_thread() {
             while (!m_done) {
-                std::function<void()> task;
-                m_work_queue.wait_and_pop(task);
-//       auto p = m_work_queue.wait_and_pop();
+                function<void()> task;
+                _queue.wait_and_pop(task);
+//       auto p = _queue.wait_and_pop();
                 task();
                 }
             }
@@ -36,13 +42,14 @@ class ThreadPool {
             }//ThreadPool()
         ~ThreadPool() {
             m_done = true;
+            _queue.notify_all();
             }
 
         //向线程池提交新任务
-        template <typename FunctionType>//支持任意可调用对象（如函数指针、lambda 表达式、函数对象等）
-        void submit(FunctionType fun) {
-            m_work_queue.push(std::function<void()>(std::move(fun)));//移动语义
+        template <typename T>//支持任意可调用对象（如函数指针、lambda 表达式、函数对象等）
+        void submit(T fun) {
+            _queue.push(function<void()>(move(fun)));//移动语义
             }
     };//class ThreadPool
 } // namespace m::thread
-#endif // CPP_SIMPLE_WEB_SERVER_THREAD_POOL_HPP
+#endif // THREAD_POOL_H

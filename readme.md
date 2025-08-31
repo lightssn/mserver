@@ -13,7 +13,7 @@ mkdir build && cd build && cmake .. && make
 其中`ip_address`为服务器局域网地址，`port_number`为监听端口，`threads_num`为工作线程数，`index_page_path`为网站根目录，默认为`/var/www/html`
 
 ### Example
-cd /mnt/f/code/mserver/out/build/WSL-GCC-Debug/apps
+cd /mnt/f/code/mserver/out/build/WSL-GCC-Release/apps
 server/server http://127.0.0.1 1090 5
 
 经`Webbench`测试，设定工作线程数为`10`时，`QPS`可达`5.2w`左右。示例命令：
@@ -68,7 +68,7 @@ int main() {
 }
 ```
 
-### Record Tests
-全原: 149777
-
+### Test
+cd build && ctest
+or ./libs/thread/thread_pool_test
 

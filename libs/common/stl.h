@@ -1,0 +1,24 @@
+#ifndef COMMON_STL_H
+#define COMMON_STL_H
+#include <vector>
+#include <thread>
+#include <functional>
+#include <future>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+using std::vector;
+using std::queue;
+using std::thread;
+using std::function;
+using std::future;
+using std::packaged_task;
+using std::atomic;
+using std::unique_lock;
+using std::lock_guard;
+using std::mutex;
+using std::forward;
+using std::make_shared;
+using std::condition_variable;
+#endif//COMMON_STL_H

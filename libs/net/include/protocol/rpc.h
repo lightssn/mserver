@@ -3,8 +3,12 @@
 #include "my_json/core.h"
 #include "type_traits"
 #include <functional>
-#include <netinet/in.h>
 #include <string_view>
+#ifdef WIN32
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#endif
 
 namespace m::net::rpc::detail {
 using namespace std;
