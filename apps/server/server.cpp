@@ -5,6 +5,7 @@
 #include <protocol/tcp.h>
 #include <os.h>
 #include <test_type.h>
+#include "../../libs/net/server.h"
 using namespace m;
 using namespace std::chrono_literals;
 using namespace MyTypeList;
@@ -42,6 +43,8 @@ int main(int argc, char *argv[]) {
         }
 
     //m::os::handle_signal(SIGPIPE, SIG_IGN);
+
+    mnet::Server mserver(0000, "tcp");
 
     //创建并配置基于http的rpc服务器
     net::http::Reactor::Config config{ip,

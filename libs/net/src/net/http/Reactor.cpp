@@ -12,7 +12,6 @@
 #include <unistd.h>
 #endif
 constexpr auto DEBUG = false;
-
 using namespace std;
 
 namespace m::net::http {
@@ -32,7 +31,7 @@ Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD)
     tcp::bind(m_server_fd, cfg.ip, cfg.port);//绑定套接字的IP和端口
     tcp::listen(m_server_fd, cfg.listen_size);//开始监听并设置监听队列长度（允许等待处理的客户端连接请求数）
     fmt::println("[INFO] Server listening on {}:{}", cfg.ip, cfg.port);
-    }
+    }//Reactor
 
 Reactor::~Reactor() {
     close(m_server_fd);
@@ -150,6 +149,6 @@ void Reactor::run() {
             else
                 close_connection(fd);
             }
-        }//while
+        }//while(true)
     }//run()
 } // namespace m::net::http

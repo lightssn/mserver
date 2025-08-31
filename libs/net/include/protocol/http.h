@@ -136,9 +136,9 @@ class Handler {
         RequestParser m_request_parser;
         ResponseBuffer m_response_buffer;//http响应数据
         bool m_keep_alive;
-        chrono::steady_clock::time_point m_last_alive_time, m_lazy_current_time;
 
     public:
+        chrono::steady_clock::time_point m_last_alive_time, m_lazy_current_time;
         friend class Reactor;
         explicit Handler(chrono::steady_clock::time_point, const sockaddr_in &);
         [[nodiscard]] string get_addr_str() const;
@@ -158,6 +158,9 @@ class Acceptor {
     };
 
 class Reactor {
+    vector<shared_ptr<Handler>> m_handlers;
+    int m_server_fd;//服务端套接字
+    RpcFuncTable m_rpc_funcs;//映射表
     public:
         constexpr static inline size_t MAX_FD = 65536;
         struct Config {
@@ -167,10 +170,7 @@ class Reactor {
             size_t working_thread_num = 4, max_idle_seconds = 30, listen_size = 5, selector_size = 5;
             };
     private:
-        vector<shared_ptr<Handler>> m_handlers;
         Config m_config;
-        int m_server_fd;//服务端套接字
-        RpcFuncTable m_rpc_funcs;//映射表
 
     public:
         explicit Reactor(const Config &);
