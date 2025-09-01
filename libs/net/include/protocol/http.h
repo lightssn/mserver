@@ -93,9 +93,10 @@ struct ResponseBuffer {
     int file_fd{-1};
     string s{};//ÏìÓ¦×Ö·û´®
     size_t write_index{0};
-    ssize_t file_size{0}, file_write_index{0};
+    size_t file_size{0}, file_write_index{0};
     };
 
+#ifdef __linux__
 class EpollSelector {
     private:
         constexpr static int MAX_EVENT_NUM = 10000;
@@ -126,9 +127,43 @@ class EpollSelector {
         EpollSelector() = delete;
         ~EpollSelector();
     };
+#endif
 
 // read -> work -> write
 class Handler {
+#ifdef _WIN32
+    OVERLAPPED read_overlapped;
+    OVERLAPPED write_overlapped;
+    WSABUF read_buf;
+    WSABUF write_buf;
+    char read_buffer[8192];
+    char write_buffer[8192];
+
+    IOState post_recv(int fd) {
+        ZeroMemory(&read_overlapped, sizeof(OVERLAPPED));
+        read_buf.buf = read_buffer;
+        read_buf.len = sizeof(read_buffer);
+        DWORD flags = 0;
+        if (WSARecv(fd, &read_buf, 1, NULL, &flags, &read_overlapped, NULL) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                return IOState::BAD;
+            }
+        }
+        return IOState::OK;
+    }
+
+    IOState post_send(int fd) {
+        ZeroMemory(&write_overlapped, sizeof(OVERLAPPED));
+        write_buf.buf = write_buffer;
+        //write_buf.len = write_size;//t
+        if (WSASend(fd, &write_buf, 1, NULL, 0, &write_overlapped, NULL) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                return IOState::BAD;
+            }
+        }
+        return IOState::OK;
+    }
+#endif
         constexpr static size_t READ_BUFFER_SIZE = 2048;
         sockaddr_in m_addr;
         string m_read_buffer;

@@ -1,6 +1,4 @@
-//
-// Created by wwww on 2023/8/23.
-//
+#ifdef __linux__
 #include <cerrno>
 #include <fmt/format.h>
 #include <protocol/http.h>
@@ -115,5 +113,5 @@ auto EpollSelector::get_next_event() -> Event {
     throw std::runtime_error{
         fmt::format("unknown epoll event type, event={}", event)};
     }
-
 } // namespace m::net::http
+#endif

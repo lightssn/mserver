@@ -11,8 +11,8 @@ int main() {
     cli.dial("/*server address*/ : /*server ip*/");
     cout << cli.call<string, string>("echo", "i am client, rpc okay").value() << endl;
 
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<float> dist(1.0, 20.0);
+    mt19937 rng(random_device{}());
+    uniform_real_distribution<float> dist(1.0, 20.0);
 
     for (int i = 0; i < 13; ++i) {
         auto res = cli.call<Arg, string>("calculate", Arg{dist(rng), static_cast<int>(dist(rng))});

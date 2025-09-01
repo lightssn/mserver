@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
 
     //m::os::handle_signal(SIGPIPE, SIG_IGN);
 
-    mnet::Server mserver(0000, "tcp");
+    //mnet::Server mserver(0000, "tcp");
 
     //创建并配置基于http的rpc服务器
     net::http::Reactor::Config config{ip,

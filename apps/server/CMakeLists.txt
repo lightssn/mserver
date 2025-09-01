@@ -1,3 +1,6 @@
 project(server)
 add_executable(${PROJECT_NAME} "server.cpp")
-target_link_libraries(${PROJECT_NAME} PRIVATE net pthread)
+target_link_libraries(${PROJECT_NAME} PRIVATE net)
+if(WIN32)
+target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+endif()

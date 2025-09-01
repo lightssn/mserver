@@ -5,6 +5,7 @@
 #include <sstream>
 #include <sys/stat.h>
 #ifdef WIN32
+#include <corecrt_io.h>
 #include <winsock2.h>
 #else
 #include <arpa/inet.h>
@@ -92,20 +93,39 @@ auto Handler::work(string_view html_dir, RpcFuncTable &rpc_table) -> IOState {//
         if (stat(file_name.data(), &file_state) != 0)
             return ResponseCode::NOT_FOUND;
         //请求的是目录，添加默认索引页名称，再次检查
+#ifdef _WIN32
+        if (file_state.st_mode& FILE_ATTRIBUTE_DIRECTORY) {
+#else
         if (S_ISDIR(file_state.st_mode)) {
+#endif
             file_name += "/";
             file_name += default_index_page_name;
             if (stat(file_name.data(), &file_state) != 0)
                 return ResponseCode::BAD_REQUEST;
             }
-        //文件对其他用户不可读
-        if (!(file_state.st_mode & S_IROTH))
+#ifdef _WIN32
+        bool is_readable = true;  // Windows 默认所有文件都可读
+#else
+        bool is_readable = (file_state.st_mode & S_IROTH);
+#endif
+        if (!is_readable) //文件对其他用户不可读
             return ResponseCode::FORBIDDEN;
         return ResponseCode::OK;
         }();
 
     //记录文件描述符和文件大小
     if (m_response_buffer.code == ResponseCode::OK) {
+#ifdef _WIN32
+        m_response_buffer.file_fd = _open(file_name.data(), _O_RDONLY | _O_BINARY);
+        if (m_response_buffer.file_fd == -1) {
+            // 错误处理
+            }
+#else
+        m_response_buffer.file_fd = open(file_name.data(), O_RDONLY);
+        if (m_response_buffer.file_fd == -1) {
+            // 错误处理
+            }
+#endif
         m_response_buffer.file_fd = open(file_name.data(), O_RDONLY);
         m_response_buffer.file_size = file_state.st_size;
         m_keep_alive = request.keep_alive;
@@ -154,13 +174,13 @@ auto Handler::write(int fd) -> IOState {
         // Windows doesn't have sendfile, we need to implement a fallback
         // This is a simplified version - for production you'd want proper buffering
         const size_t chunk_size = 4096;
-        std::vector<char> buffer(chunk_size);
+        vector<char> buffer(chunk_size);
         while (m_response_buffer.file_write_index < m_response_buffer.file_size) {
             // Seek to current position
             _lseek(m_response_buffer.file_fd, static_cast<long>(m_response_buffer.file_write_index), SEEK_SET);
             // Read chunk
             auto read_bytes = _read(m_response_buffer.file_fd, buffer.data(),
-                                    static_cast<unsigned int>(std::min(chunk_size, m_response_buffer.file_size - m_response_buffer.file_write_index)));
+                                    static_cast<unsigned int>(min(chunk_size, m_response_buffer.file_size - m_response_buffer.file_write_index)));
 
             if (read_bytes <= 0) {
                 break;

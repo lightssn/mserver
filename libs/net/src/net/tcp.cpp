@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #ifdef WIN32
+#include <ws2tcpip.h>
 #include <winsock2.h>
 #else
 #include <arpa/inet.h>
@@ -19,14 +20,34 @@ int create_socket() {
 
 void bind(int fd, string_view ip, size_t port) {
     struct sockaddr_in address {};
-    bzero(&address, sizeof(address));//初始化为零
-    address.sin_family = AF_INET;//使用IPV4
-    inet_pton(AF_INET, ip.data(), &address.sin_addr);//字符串ip转二进制
-    address.sin_port = htons(port);//将端口号从主机字节序转换为网络字节序
-    auto ret = bind(fd, (struct sockaddr *)&address, sizeof address);
-    if (ret != 0)
-        throw runtime_error{fmt::format("cannot bind on {}:{}", ip, port)};
+    memset(&address, 0, sizeof(address)); //使用 memset 替代 bzero初始化为零
+    address.sin_family = AF_INET;  // 使用 IPv4
+    //字符串ip转二进制
+#ifdef _WIN32
+    if (InetPton(AF_INET, ip.data(), &address.sin_addr) != 1) {
+        throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };
     }
+#else
+    // Linux 使用 inet_pton
+    if (inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
+        throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };
+    }
+#endif
+
+    address.sin_port = htons(static_cast<u_short>(port));  //将端口号从主机字节序转换为网络字节序，Windows 需要显式转换为 u_short
+
+    // 绑定操作
+#ifdef _WIN32
+    if (::bind(fd, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        throw runtime_error{ fmt::format("Cannot bind on {}:{}, error code: {}", ip, port, err) };
+    }
+#else
+    if (::bind(fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
+        throw runtime_error{ fmt::format("Cannot bind on {}:{}, error: {}", ip, port, strerror(errno)) };
+    }
+#endif
+}
 
 void listen(int fd, size_t n) {
     auto ret = ::listen(fd, n);//n为最多排队数
