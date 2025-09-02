@@ -196,7 +196,8 @@ auto Handler::write(int fd) -> IOState {
             }
 #else
         while (m_response_buffer.file_write_index < m_response_buffer.file_size) {
-            auto sent_bytes = sendfile(fd, m_response_buffer.file_fd, &m_response_buffer.file_write_index,
+            off_t off_write_index = static_cast<off_t>(m_response_buffer.file_write_index);
+            auto sent_bytes = sendfile(fd, m_response_buffer.file_fd, &off_write_index,
                                        m_response_buffer.file_size - m_response_buffer.file_write_index);
             if (sent_bytes < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)

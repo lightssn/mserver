@@ -1,6 +1,7 @@
 #include <csignal>
 #include <fmt/core.h>
 #include <iostream>
+#include <stdexcept>
 #include <protocol/http.h>
 #include <protocol/tcp.h>
 #include <os.h>
@@ -23,24 +24,30 @@ string fun(Arg a) {
 int main(int argc, char *argv[]) {
     //解析参数
     string_view html_root_dir = net::http::default_html_dir;
-    char *ip;
+    const char *ip;
     int port;
     size_t working_thread_num;
+#ifndef NDEBUG
+    ip = "http://127.0.0.1";
+    port = 1090;
+    working_thread_num = 5;
+#else
     try {
         if (argc < 4 || argc > 5)
-            throw invalid_argument{"bad argc"};
+            throw invalid_argument{ "bad argc" };
         ip = argv[1];
         port = stoi(argv[2]);
         working_thread_num = stoi(argv[3]);
         if (argc > 4)
             html_root_dir = argv[4];
-        }
+    }
     catch (...) {
         fmt::print(
             "usage: {} ip_address port_number threads_num [index_page_path]\n",
             argv[0]);
         return 0;
-        }
+    }
+#endif
 
     //m::os::handle_signal(SIGPIPE, SIG_IGN);
 
@@ -54,13 +61,19 @@ int main(int argc, char *argv[]) {
                                       30,//连接最大空闲秒数
                                       5//监听队列大小，队列中等待处理的客户端连接最大数量
     };
-    net::http::Reactor server = net::http::Reactor(config);
-    //注册rpc服务，服务名echo，处理函数为lambda函数：传入字符串，返回带[Server Echo]前缀的字符串
-    server.rpc_register("echo", [](const string &x) {
-        return string{"[Server Echo] "} + x;
-        });
-    //注册rpc服务，服务名calculate，处理函数为fun
-    server.rpc_register("calculate", fun);
-    server.run();//启动服务器
+    try {
+        net::http::Reactor server = net::http::Reactor(config);
+        //注册rpc服务，服务名echo，处理函数为lambda函数：传入字符串，返回带[Server Echo]前缀的字符串
+        server.rpc_register("echo", [](const string& x) {
+            return string{ "[Server Echo] " } + x;
+            });
+        //注册rpc服务，服务名calculate，处理函数为fun
+        server.rpc_register("calculate", fun);
+        server.run();//启动服务器
+    }
+    catch (const exception& e) {
+        cerr << "Reactor error: " << e.what() << endl;
+        return -1;
+    }
     return 0;
     }//main

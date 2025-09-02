@@ -8,6 +8,7 @@
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
+#include <cstring>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #endif

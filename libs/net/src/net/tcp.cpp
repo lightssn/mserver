@@ -25,15 +25,16 @@ void bind(int fd, string_view ip, size_t port) {
     //字符串ip转二进制
 #ifdef _WIN32
     if (InetPton(AF_INET, ip.data(), &address.sin_addr) != 1) {
-        throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };
+        throw runtime_error("Invalid IP address: " + string(ip));
     }
 #else
-    // Linux 使用 inet_pton
-    if (inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
-        throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };
-    }
+    inet_pton(AF_INET, ip.data(), &address.sin_addr);
+    //temp
+    //inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
+    //    throw runtime_error("Invalid IP address: " + string(ip));
+    //    //throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };//编译期格式化
+    //}
 #endif
-
     address.sin_port = htons(static_cast<u_short>(port));  //将端口号从主机字节序转换为网络字节序，Windows 需要显式转换为 u_short
 
     // 绑定操作
@@ -43,7 +44,7 @@ void bind(int fd, string_view ip, size_t port) {
         throw runtime_error{ fmt::format("Cannot bind on {}:{}, error code: {}", ip, port, err) };
     }
 #else
-    if (::bind(fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
+    if (bind(fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
         throw runtime_error{ fmt::format("Cannot bind on {}:{}, error: {}", ip, port, strerror(errno)) };
     }
 #endif

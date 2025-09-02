@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "my_json/core.h"
 #include <fmt/core.h>
 #include <protocol/http.h>
@@ -13,6 +14,7 @@
 #else
 #include <arpa/inet.h>
 #include <unistd.h>
+#define closesocket close
 #endif
 constexpr auto DEBUG = false;
 using namespace std;
@@ -20,6 +22,13 @@ using namespace std;
 namespace m::net::http {
 //创建TCP服务器套接字，绑定IP和端口，开始监听
 Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD), m_rpc_funcs{} {
+#ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        throw runtime_error("WSAStartup failed");//抛出异常对象
+        //throw make_exception_ptr(runtime_error("WSAStartup failed"));//抛出共享异常对象指针
+        }
+#endif
     //创建 TCP 套接字
     m_server_fd = tcp::create_socket();
 
@@ -29,12 +38,7 @@ Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD)
 
     //设置套接字SO_REUSEADDR，允许地址复用。服务器重启时，如果没有设置该选项，可能会因为旧的连接还处于 TIME_WAIT 状态而导致无法立即绑定到相同的地址和端口
     int flag = 1;//表示启用
-#ifdef _WIN32
-    const char* optval = (flag != 0) ? "1" : "0";
-    setsockopt(m_server_fd, SOL_SOCKET, SO_REUSEADDR, optval, sizeof(flag));
-#else
-    setsockopt(m_server_fd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
-#endif
+    setsockopt(m_server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&flag), sizeof(flag));
 
     tcp::bind(m_server_fd, cfg.ip, cfg.port);//绑定套接字的IP和端口
     tcp::listen(m_server_fd, cfg.listen_size);//开始监听并设置监听队列长度（允许等待处理的客户端连接请求数）
@@ -42,24 +46,21 @@ Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD)
     }//Reactor
 
 Reactor::~Reactor() {
-#ifdef _WIN32
     closesocket(m_server_fd);
-#else
-    close(m_server_fd);
-#endif
     for (int i = 0; i < m_handlers.size(); ++i)
         if (m_handlers[i] != nullptr)
-#ifdef _WIN32
             closesocket(i);
-#else
-            close(i);
+#ifdef _WIN32
+    if (WSACleanup() == SOCKET_ERROR) {
+        throw runtime_error("WSACleanup failed. Error code: " + WSAGetLastError());
+        }
 #endif
     }
 
 //基于事件驱动的网络服务器反应器Reactor。使用 Epoll 作为 I/O 多路复用机制，能够处理多个客户端连接，并通过线程池处理客户端请求。同时，它还具备连接空闲超时处理功能，当连接空闲时间超过设定的阈值时，会自动关闭连接
 void Reactor::run() {
     auto lazy_current_time = chrono::steady_clock::now();
-    
+
     //管理 I/O 事件的对象，传入服务器套接字描述符和选择器大小
 #ifdef _WIN32
     auto selector = IocpSelector(m_server_fd, m_config.selector_size);
@@ -87,7 +88,7 @@ void Reactor::run() {
         if (state != IOState::OK) {
             close_connection(client_fd);
             return;
-        }
+            }
 #else
         selector.register_on_reading(client_fd);
 #endif
@@ -117,7 +118,7 @@ void Reactor::run() {
     liDueTime.QuadPart = -static_cast<LONGLONG>(m_config.max_idle_seconds) * 10000000LL;
     SetWaitableTimer(hTimer, &liDueTime, m_config.max_idle_seconds * 1000, NULL, NULL, FALSE);
 #else
-    auto max_connection_idle_time = chrono::seconds{ m_config.max_idle_seconds };
+    auto max_connection_idle_time = chrono::seconds { m_config.max_idle_seconds };
     auto idle_timer = m::os::Timer(max_connection_idle_time.count(), 0);
     auto idle_timer_fd = idle_timer.get_fd();
     selector.register_timer(idle_timer_fd);
@@ -129,11 +130,11 @@ void Reactor::run() {
             if (m_handlers[i] == nullptr)
                 continue;
             if (m_handlers[i]->m_last_alive_time + max_connection_idle_time <
-                lazy_current_time)
+                    lazy_current_time)
                 close_connection(i);
             else
                 m_handlers[i]->update_current_time(lazy_current_time);
-        }
+            }
         };
 #endif
 
@@ -201,17 +202,17 @@ void Reactor::run() {
                 auto state = h->work(m_config.mapping_path, m_rpc_funcs);
                 if (state == IOState::PENDING) {
                     h->post_recv(fd);
-                }
+                    }
                 else {
                     h->post_send(fd);
-                }
+                    }
                 });
 #else
             auto state = handler->read(fd);
             if (state != IOState::OK) {
                 close_connection(fd);
                 continue;
-            }
+                }
             thread_pool.submit([&, h = m_handlers[fd], fd = fd]() {
                 auto state = h->work(m_config.mapping_path, m_rpc_funcs);
                 if (state == IOState::PENDING)
