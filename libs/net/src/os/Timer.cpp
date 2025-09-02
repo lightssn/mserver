@@ -1,19 +1,16 @@
 #include <os.h>
 #include <stdexcept>
 #include <chrono>
-
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <sys/timerfd.h>
 #include <unistd.h>
 #endif
-
+using namespace std;
 namespace m::os {
-
 Timer::Timer(size_t seconds, size_t nanoseconds) {
 #ifdef _WIN32
-    // Windows 实现
     //m_timer_handle = CreateWaitableTimer(NULL, TRUE, NULL);
     //if (m_timer_handle == NULL) {
     //    throw std::runtime_error("Cannot create timer");
@@ -30,7 +27,6 @@ Timer::Timer(size_t seconds, size_t nanoseconds) {
     //    throw std::runtime_error("Cannot set timer");
     //    }
 #else
-    // Linux 实现
     struct itimerspec timer_opt {};
     m_fd = timerfd_create(CLOCK_MONOTONIC, 0);
     if (m_fd < 0) {
@@ -48,4 +44,15 @@ Timer::Timer(size_t seconds, size_t nanoseconds) {
 #endif
     }
 
+uint64_t Timer::tick() const {
+    uint64_t count = 0;
+    ssize_t bytes_read = read(m_fd, (void *)&count, sizeof(count));
+    if (bytes_read == -1) {
+        throw runtime_error("Failed to read from timer");
+        }
+    else if (bytes_read != sizeof(count)) {
+        throw runtime_error("Incomplete read from timer");
+        }
+    return count;
+    }
 } // namespace m::os

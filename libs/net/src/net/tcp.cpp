@@ -22,18 +22,20 @@ void bind(int fd, string_view ip, size_t port) {
     struct sockaddr_in address {};
     memset(&address, 0, sizeof(address)); //使用 memset 替代 bzero初始化为零
     address.sin_family = AF_INET;  // 使用 IPv4
+    size_t protocol_pos = ip.find("://");
+    if (protocol_pos != string_view::npos) {
+        ip = ip.substr(protocol_pos + 3); //去掉http://
+    }
     //字符串ip转二进制
 #ifdef _WIN32
     if (InetPton(AF_INET, ip.data(), &address.sin_addr) != 1) {
         throw runtime_error("Invalid IP address: " + string(ip));
     }
 #else
-    inet_pton(AF_INET, ip.data(), &address.sin_addr);
-    //temp
-    //inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
-    //    throw runtime_error("Invalid IP address: " + string(ip));
-    //    //throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };//编译期格式化
-    //}
+    if (inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
+        throw runtime_error("Invalid IP address: " + string(ip));
+        //throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };//编译期格式化
+    }
 #endif
     address.sin_port = htons(static_cast<u_short>(port));  //将端口号从主机字节序转换为网络字节序，Windows 需要显式转换为 u_short
 

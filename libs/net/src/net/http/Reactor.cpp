@@ -166,23 +166,21 @@ void Reactor::run() {
 #else
             auto &&[client_fd, client_addr] = m::net::tcp::accept(m_server_fd);
 #endif
-
-            //add_connection(client_fd, client_addr);//处理新连接 //t
+            add_connection(client_fd, client_addr);//处理新连接
             if constexpr (DEBUG) {
-                //fmt::println("[INFO] hello from {}:{} on fd {}",
-                //             string_view{inet_ntoa(client_addr.sin_addr)},
-                //             ntohs(client_addr.sin_port), client_fd);
+                fmt::println("[INFO] hello from {}:{} on fd {}",
+                             string_view{inet_ntoa(client_addr.sin_addr)},
+                             ntohs(client_addr.sin_port), client_fd);
                 }
             continue;
             }
 
         //定时器事件
-        //if (fd == idle_timer_fd) {
-        //    //            fmt::println("tick {}", idle_timer.tick());
-        //    idle_timer.tick();//处理定时器滴答
-        //    remove_idle_connections();//检查并关闭空闲连接
-        //    continue;
-        //    }
+        if (fd == idle_timer_fd) {
+            idle_timer.tick();//处理定时器滴答
+            remove_idle_connections();//检查并关闭空闲连接
+            continue;
+            }
 
         auto &handler = m_handlers[fd];
 
