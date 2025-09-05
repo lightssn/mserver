@@ -46,13 +46,21 @@ Timer::Timer(size_t seconds, size_t nanoseconds) {
 
 uint64_t Timer::tick() const {
     uint64_t count = 0;
-    ssize_t bytes_read = read(m_fd, (void *)&count, sizeof(count));
+#ifdef _WIN32
+    LARGE_INTEGER li;
+    if (!QueryPerformanceCounter(&li)) {
+        throw runtime_error("Failed to read performance counter");
+    }
+    count = li.QuadPart;
+#else
+    ssize_t bytes_read = read(m_fd, (void*)&count, sizeof(count));
     if (bytes_read == -1) {
         throw runtime_error("Failed to read from timer");
-        }
+    }
     else if (bytes_read != sizeof(count)) {
         throw runtime_error("Incomplete read from timer");
-        }
-    return count;
     }
+#endif
+    return count;
+}
 } // namespace m::os

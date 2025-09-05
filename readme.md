@@ -1,4 +1,5 @@
 ### TODO
+win iocp
 OPENMP
 
 ###  mserver 
@@ -6,6 +7,7 @@ https://github.com/zixfy/SimpleWebServer
 https://zhuanlan.zhihu.com/p/662574190
 单`Reactor`与工作线程池模型的静态网站服务端，支持长连接复用套接字，定时清除非活跃长连接
 ### Build
+apt install libgtest-dev libgmock-dev
 cd /mnt/f/code/mserver/build_u24_rel
 mkdir build && cd build && cmake .. && make
 ### Use 
@@ -17,7 +19,9 @@ cd /mnt/f/code/mserver/out/build/WSL-GCC-Release/apps
 server/server http://127.0.0.1 1090 5
 
 经`Webbench`测试，设定工作线程数为`10`时，`QPS`可达`5.2w`左右。示例命令：
-/mnt/f/codeTest/c++Test/netTest/webBench/webbench  -c 10 -t 5 -2 http://127.0.0.1:1090/
+cd /mnt/f/codeTest/c++Test/netTest/webbench
+./webbench  -c 10 -t 5 -2 http://127.0.0.1:1090/
+(https://github.com/EZLippi/WebBench)
 
 ### Others
 此外，还在`HTTP`协议之上对远程过程调用(`RPC`)功能提供了最小支持，使用静态反射宏的[序列化方案](https://github.com/zixfy/MyJson)，使用`std::function`进行注册函数多态
@@ -71,4 +75,7 @@ int main() {
 ### Test
 cd build && ctest
 or ./libs/thread/thread_pool_test
+
+home
+work 1780632
 

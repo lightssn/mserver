@@ -1,4 +1,4 @@
-#include <stdexcept>
+ï»¿#include <stdexcept>
 #include "my_json/core.h"
 #include <fmt/core.h>
 #include <protocol/http.h>
@@ -8,9 +8,11 @@
 #include <thread_pool_simple.h>
 #ifdef WIN32
 #include "../../libs/net/IocpSelector.h"
-#include <winsock2.h>
-#include <ws2tcpip.h>    // À©Õ¹TCP/IP¹¦ÄÜ£¨ÈçInetPton£©
-#include <mswsock.h>     // AcceptExµÈÀ©Õ¹API
+#include "../../libs/net/post.h"
+#include <winsock2.h>//å¿…é¡»â€‹åœ¨windows.hå‰åŒ…å«
+#include <windows.h>
+#include <ws2tcpip.h>//InetPton
+#include <mswsock.h>//AcceptEx
 #else
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -20,28 +22,28 @@ constexpr auto DEBUG = false;
 using namespace std;
 
 namespace m::net::http {
-//´´½¨TCP·şÎñÆ÷Ì×½Ó×Ö£¬°ó¶¨IPºÍ¶Ë¿Ú£¬¿ªÊ¼¼àÌı
+//åˆ›å»ºTCPæœåŠ¡å™¨å¥—æ¥å­—ï¼Œç»‘å®šIPå’Œç«¯å£ï¼Œå¼€å§‹ç›‘å¬
 Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD), m_rpc_funcs{} {
 #ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        throw runtime_error("WSAStartup failed");//Å×³öÒì³£¶ÔÏó
-        //throw make_exception_ptr(runtime_error("WSAStartup failed"));//Å×³ö¹²ÏíÒì³£¶ÔÏóÖ¸Õë
+        throw runtime_error("WSAStartup failed");//æŠ›å‡ºå¼‚å¸¸å¯¹è±¡
+        //throw make_exception_ptr(runtime_error("WSAStartup failed"));//æŠ›å‡ºå…±äº«å¼‚å¸¸å¯¹è±¡æŒ‡é’ˆ
         }
 #endif
-    //´´½¨ TCP Ì×½Ó×Ö
+    //åˆ›å»º TCP å¥—æ¥å­—
     m_server_fd = tcp::create_socket();
 
-    //ÉèÖÃÌ×½Ó×ÖSO_LINGER£¬ÑÓ³Ù¹Ø±Õ£¬ÑÓ³ÙÊ±¼äÎª1Ãë
+    //è®¾ç½®å¥—æ¥å­—SO_LINGERï¼Œå»¶è¿Ÿå…³é—­ï¼Œå»¶è¿Ÿæ—¶é—´ä¸º1ç§’
     //  struct linger tmp {1, 1};
     //  setsockopt(m_server_fd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
 
-    //ÉèÖÃÌ×½Ó×ÖSO_REUSEADDR£¬ÔÊĞíµØÖ·¸´ÓÃ¡£·şÎñÆ÷ÖØÆôÊ±£¬Èç¹ûÃ»ÓĞÉèÖÃ¸ÃÑ¡Ïî£¬¿ÉÄÜ»áÒòÎª¾ÉµÄÁ¬½Ó»¹´¦ÓÚ TIME_WAIT ×´Ì¬¶øµ¼ÖÂÎŞ·¨Á¢¼´°ó¶¨µ½ÏàÍ¬µÄµØÖ·ºÍ¶Ë¿Ú
-    int flag = 1;//±íÊ¾ÆôÓÃ
+    //è®¾ç½®å¥—æ¥å­—SO_REUSEADDRï¼Œå…è®¸åœ°å€å¤ç”¨ã€‚æœåŠ¡å™¨é‡å¯æ—¶ï¼Œå¦‚æœæ²¡æœ‰è®¾ç½®è¯¥é€‰é¡¹ï¼Œå¯èƒ½ä¼šå› ä¸ºæ—§çš„è¿æ¥è¿˜å¤„äº TIME_WAIT çŠ¶æ€è€Œå¯¼è‡´æ— æ³•ç«‹å³ç»‘å®šåˆ°ç›¸åŒçš„åœ°å€å’Œç«¯å£
+    int flag = 1;//è¡¨ç¤ºå¯ç”¨
     setsockopt(m_server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&flag), sizeof(flag));
 
-    tcp::bind(m_server_fd, cfg.ip, cfg.port);//°ó¶¨Ì×½Ó×ÖµÄIPºÍ¶Ë¿Ú
-    tcp::listen(m_server_fd, cfg.listen_size);//¿ªÊ¼¼àÌı²¢ÉèÖÃ¼àÌı¶ÓÁĞ³¤¶È£¨ÔÊĞíµÈ´ı´¦ÀíµÄ¿Í»§¶ËÁ¬½ÓÇëÇóÊı£©
+    tcp::bind(m_server_fd, cfg.ip, cfg.port);//ç»‘å®šå¥—æ¥å­—çš„IPå’Œç«¯å£
+    tcp::listen(m_server_fd, cfg.listen_size);//å¼€å§‹ç›‘å¬å¹¶è®¾ç½®ç›‘å¬é˜Ÿåˆ—é•¿åº¦ï¼ˆå…è®¸ç­‰å¾…å¤„ç†çš„å®¢æˆ·ç«¯è¿æ¥è¯·æ±‚æ•°ï¼‰
     fmt::println("[INFO] Server listening on {}:{}", cfg.ip, cfg.port);
     }//Reactor
 
@@ -57,88 +59,92 @@ Reactor::~Reactor() {
 #endif
     }
 
-//»ùÓÚÊÂ¼şÇı¶¯µÄÍøÂç·şÎñÆ÷·´Ó¦Æ÷Reactor¡£Ê¹ÓÃ Epoll ×÷Îª I/O ¶àÂ·¸´ÓÃ»úÖÆ£¬ÄÜ¹»´¦Àí¶à¸ö¿Í»§¶ËÁ¬½Ó£¬²¢Í¨¹ıÏß³Ì³Ø´¦Àí¿Í»§¶ËÇëÇó¡£Í¬Ê±£¬Ëü»¹¾ß±¸Á¬½Ó¿ÕÏĞ³¬Ê±´¦Àí¹¦ÄÜ£¬µ±Á¬½Ó¿ÕÏĞÊ±¼ä³¬¹ıÉè¶¨µÄãĞÖµÊ±£¬»á×Ô¶¯¹Ø±ÕÁ¬½Ó
+//åŸºäºäº‹ä»¶é©±åŠ¨çš„ç½‘ç»œæœåŠ¡å™¨ååº”å™¨Reactorã€‚ä½¿ç”¨ Epoll ä½œä¸º I/O å¤šè·¯å¤ç”¨æœºåˆ¶ï¼Œèƒ½å¤Ÿå¤„ç†å¤šä¸ªå®¢æˆ·ç«¯è¿æ¥ï¼Œå¹¶é€šè¿‡çº¿ç¨‹æ± å¤„ç†å®¢æˆ·ç«¯è¯·æ±‚ã€‚åŒæ—¶ï¼Œå®ƒè¿˜å…·å¤‡è¿æ¥ç©ºé—²è¶…æ—¶å¤„ç†åŠŸèƒ½ï¼Œå½“è¿æ¥ç©ºé—²æ—¶é—´è¶…è¿‡è®¾å®šçš„é˜ˆå€¼æ—¶ï¼Œä¼šè‡ªåŠ¨å…³é—­è¿æ¥
 void Reactor::run() {
     auto lazy_current_time = chrono::steady_clock::now();
 
-    //¹ÜÀí I/O ÊÂ¼şµÄ¶ÔÏó£¬´«Èë·şÎñÆ÷Ì×½Ó×ÖÃèÊö·ûºÍÑ¡ÔñÆ÷´óĞ¡
+    //ç®¡ç†I/Oäº‹ä»¶å¯¹è±¡ï¼Œä¼ å…¥æœåŠ¡å™¨å¥—æ¥å­—æè¿°ç¬¦å’Œé€‰æ‹©å™¨å¤§å°
 #ifdef _WIN32
     auto selector = IocpSelector(m_server_fd, m_config.selector_size);
 #else
     auto selector = EpollSelector(m_server_fd, m_config.selector_size);
 #endif
 
-    //Lambdaº¯Êı£¬¹Ø±ÕÖ¸¶¨ÎÄ¼şÃèÊö·û¶ÔÓ¦µÄÁ¬½Ó£¬°üÀ¨ÊÍ·Å´¦Àí³ÌĞò¡¢´ÓÑ¡ÔñÆ÷ÖĞ×¢ÏúºÍ¹Ø±ÕÌ×½Ó×Ö
+    //lambdaï¼Œå…³é—­æŒ‡å®šæ–‡ä»¶æè¿°ç¬¦å¯¹åº”çš„è¿æ¥ï¼ŒåŒ…æ‹¬é‡Šæ”¾å¤„ç†ç¨‹åºã€ä»é€‰æ‹©å™¨ä¸­æ³¨é”€å’Œå…³é—­å¥—æ¥å­—
     auto close_connection = [&](int fd) {
         m_handlers[fd].reset();
         selector.unregister(fd);
-#ifdef _WIN32
         closesocket(fd);
-#else
-        close(fd);
-#endif
         };
 
-    //Lambdaº¯Êı£¬Ìí¼ÓĞÂµÄ¿Í»§¶ËÁ¬½Ó£¬½«Æä×¢²áµ½Ñ¡ÔñÆ÷µÄ¶ÁÊÂ¼şÖĞ£¬²¢´´½¨¶ÔÓ¦µÄ´¦Àí³ÌĞò
+    //lambdaï¼Œæ·»åŠ æ–°è¿æ¥ï¼Œæ³¨å†Œåˆ°é€‰æ‹©å™¨è¯»äº‹ä»¶ï¼Œåˆ›å»ºå¤„ç†ç¨‹åº
     auto add_connection = [&](int client_fd, const sockaddr_in &client_addr) {
+        auto& handler = m_handlers[client_fd];
+        handler = make_shared<Handler>(lazy_current_time, client_addr);
 #ifdef _WIN32
-        // Windows ÏÂĞèÒªÁ¢¼´Í¶µİ¶Á²Ù×÷
-        //selector.register_on_reading(client_fd);//t
+        //IOCP ä¸­ï¼Œâ€‹å¿…é¡»å…ˆå‘èµ·ä¸€ä¸ª I/O æ“ä½œï¼ˆå¦‚ WSARecvï¼‰â€‹ï¼Œç„¶åæ‰èƒ½ç­‰å¾…å®Œæˆé€šçŸ¥ã€‚å¦‚æœä¸è°ƒç”¨ post_recvï¼ŒIOCP ä¸ä¼šè‡ªåŠ¨ç›‘æµ‹è¯¥å¥—æ¥å­—çš„å¯è¯»äº‹ä»¶
         auto state = m_handlers[client_fd]->post_recv(client_fd);
         if (state != IOState::OK) {
             close_connection(client_fd);
             return;
             }
-#else
-        selector.register_on_reading(client_fd);
 #endif
-        auto &handler = m_handlers[client_fd];
-        handler = make_shared<Handler>(lazy_current_time, client_addr);
+        selector.register_on_reading(client_fd);
         };
 
-    // ×¢²á¼àÌısocket
 #ifdef _WIN32
-    selector.register_on_listening_lt(m_server_fd);
-    // Windows ĞèÒªÔ¤ÏÈÍ¶µİAcceptEx
-    //post_accept();
-#else
-    selector.register_on_listening_lt(m_server_fd);
+    // Windows éœ€è¦é¢„å…ˆæŠ•é€’AcceptEx
+    for (int i = 0; i < 5; i++) {
+        post_accept_ex(m_server_fd);
+    }
 #endif
+    //æ³¨å†Œç›‘å¬socket
+    selector.register_on_listening_lt(m_server_fd);
 
-    //´´½¨´¦Àí¿Í»§¶ËÇëÇóµÄÏß³Ì³Ø
+    //åˆ›å»ºå¤„ç†å®¢æˆ·ç«¯è¯·æ±‚çš„çº¿ç¨‹æ± 
     size_t size = m_config.working_thread_num;
     //auto thread_pool = thread::ThreadPool(size);
     auto thread_pool = ThreadPoolSimple(size);
 
-    //´´½¨¶¨Ê±Æ÷£¬ÓÃÓÚ¼ì²éÁ¬½ÓµÄ¿ÕÏĞÊ±¼ä
-    // Windows IOCP ²»ĞèÒªµ¥¶ÀµÄ¶¨Ê±Æ÷fd£¬¿ÉÒÔÊ¹ÓÃWaitableTimer
+    //åˆ›å»ºå®šæ—¶å™¨ï¼Œç”¨äºæ£€æŸ¥è¿æ¥çš„ç©ºé—²æ—¶é—´
 #ifdef _WIN32
-    HANDLE hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
+    HANDLE hTimer = CreateWaitableTimer(NULL, FALSE, NULL);//TRUEæ‰‹åŠ¨é‡ç½®ï¼ŒFALSEè‡ªåŠ¨é‡ç½®
+    if (hTimer == NULL) {
+        throw runtime_error("Failed to create timer");
+    }
+
+	selector.bind_timer(hTimer);
+
+    //è®¾ç½®å®šæ—¶å™¨(é¦–æ¬¡è§¦å‘å’Œè§¦å‘é—´éš”éƒ½ä¸º30s)
     LARGE_INTEGER liDueTime;
     liDueTime.QuadPart = -static_cast<LONGLONG>(m_config.max_idle_seconds) * 10000000LL;
-    SetWaitableTimer(hTimer, &liDueTime, m_config.max_idle_seconds * 1000, NULL, NULL, FALSE);
+    if (!SetWaitableTimer(hTimer, &liDueTime, m_config.max_idle_seconds * 1000, NULL, NULL, FALSE)) {
+        CloseHandle(hTimer);
+        throw runtime_error("Failed to SetWaitableTimer");
+    }
 #else
-    auto max_connection_idle_time = chrono::seconds { m_config.max_idle_seconds };
+
+#endif
+    auto max_connection_idle_time = chrono::seconds{ m_config.max_idle_seconds };
     auto idle_timer = m::os::Timer(max_connection_idle_time.count(), 0);
     auto idle_timer_fd = idle_timer.get_fd();
     selector.register_timer(idle_timer_fd);
 
-    //Lambdaº¯Êı£¬¿ÕÏĞÁ¬½Ó´¦Àí¡£±éÀúËùÓĞ´¦Àí³ÌĞò£¬¼ì²éÃ¿¸öÁ¬½ÓµÄ¿ÕÏĞÊ±¼ä¡£Èç¹ûÁ¬½ÓµÄ¿ÕÏĞÊ±¼ä³¬¹ıÁË max_connection_idle_time£¬Ôò¹Ø±Õ¸ÃÁ¬½Ó£»·ñÔò£¬¸üĞÂÁ¬½ÓµÄ×îºó»îÔ¾Ê±¼ä
+    //lambdaï¼Œç©ºé—²è¿æ¥å¤„ç†ã€‚éå†æ‰€æœ‰å¤„ç†ç¨‹åºï¼Œæ£€æŸ¥æ¯ä¸ªè¿æ¥çš„ç©ºé—²æ—¶é—´ã€‚å¦‚æœè¶…è¿‡max_connection_idle_timeï¼Œå…³é—­è¿æ¥ï¼›å¦åˆ™ï¼Œæ›´æ–°è¿æ¥æœ€åæ´»è·ƒæ—¶é—´
     auto remove_idle_connections = [&] {
         lazy_current_time = chrono::steady_clock::now();
         for (int i = 0; i < m_handlers.size(); ++i) {
             if (m_handlers[i] == nullptr)
                 continue;
             if (m_handlers[i]->m_last_alive_time + max_connection_idle_time <
-                    lazy_current_time)
+                lazy_current_time)
                 close_connection(i);
             else
                 m_handlers[i]->update_current_time(lazy_current_time);
-            }
+        }
         };
-#endif
 
-    //ÊÂ¼şÑ­»·£¬´ÓÑ¡ÔñÆ÷ÖĞ»ñÈ¡ÏÂÒ»¸öÊÂ¼ş²¢´¦Àí
+    //äº‹ä»¶å¾ªç¯ï¼Œä»é€‰æ‹©å™¨ä¸­è·å–ä¸‹ä¸€ä¸ªäº‹ä»¶å¹¶å¤„ç†
     while (true) {
 #ifdef _WIN32
         using EventTag = IocpSelector::Event::Tag;
@@ -147,55 +153,54 @@ void Reactor::run() {
 #endif
         auto [tag, fd] = selector.get_next_event();
 
-#ifdef _WIN32
-        // Windows ÏÂĞèÒª´¦Àí¶¨Ê±Æ÷ÊÂ¼ş
-        //if (tag == EventTag::TIMER) {
-        //    remove_idle_connections();
-        //    continue;
-        //}
-#endif
-
-        //ĞÂÁ¬½ÓÊÂ¼ş
+        //æ–°è¿æ¥äº‹ä»¶
         if (tag == EventTag::CONNECTION) {
-            //½ÓÊÜĞÂÁ¬½Ó
+            //æ¥å—æ–°è¿æ¥
 #ifdef _WIN32
-// Windows ÏÂÊ¹ÓÃAcceptEx½ÓÊÜµÄÁ¬½Ó
-            //auto [client_fd, client_addr] = get_accept_result();//t
-            // ¼ÌĞøÍ¶µİĞÂµÄAcceptEx
-            //post_accept();
+// Windows ä¸‹ä½¿ç”¨AcceptExæ¥å—è¿æ¥
+            auto [client_fd, client_addr] = selector.accept_async(m_server_fd);
+            // ç»§ç»­æŠ•é€’æ–°çš„AcceptEx
+            post_accept_ex(m_server_fd);
 #else
             auto &&[client_fd, client_addr] = m::net::tcp::accept(m_server_fd);
 #endif
-            add_connection(client_fd, client_addr);//´¦ÀíĞÂÁ¬½Ó
+            add_connection(client_fd, client_addr);//å¤„ç†æ–°è¿æ¥
             if constexpr (DEBUG) {
-                fmt::println("[INFO] hello from {}:{} on fd {}",
-                             string_view{inet_ntoa(client_addr.sin_addr)},
-                             ntohs(client_addr.sin_port), client_fd);
+                //fmt::println("[INFO] hello from {}:{} on fd {}",
+                //             string_view{inet_ntoa(client_addr.sin_addr)},
+                //             ntohs(client_addr.sin_port), client_fd);
                 }
             continue;
             }
 
-        //¶¨Ê±Æ÷ÊÂ¼ş
-        if (fd == idle_timer_fd) {
-            idle_timer.tick();//´¦Àí¶¨Ê±Æ÷µÎ´ğ
-            remove_idle_connections();//¼ì²é²¢¹Ø±Õ¿ÕÏĞÁ¬½Ó
+        //å®šæ—¶å™¨äº‹ä»¶
+#ifdef _WIN32
+        if (tag == EventTag::TIME) {
+            remove_idle_connections();
             continue;
-            }
+        }
+#else
+        if (fd == idle_timer_fd) {
+            idle_timer.tick();//å¤„ç†å®šæ—¶å™¨æ»´ç­”
+            remove_idle_connections();//æ£€æŸ¥å¹¶å…³é—­ç©ºé—²è¿æ¥
+            continue;
+        }
+#endif
 
         auto &handler = m_handlers[fd];
 
-        //¹Ø±ÕÊÂ¼ş
+        //å…³é—­äº‹ä»¶
         if (tag == EventTag::CLOSE) {
             if constexpr (DEBUG) {
                 fmt::println("[INFO] bye to {}  on fd {}", handler->get_addr_str(), fd);
                 }
-            close_connection(fd);//¹Ø±ÕÁ¬½Ó
+            close_connection(fd);//å…³é—­è¿æ¥
             }
 
-        //¶ÁÊÂ¼ş¡£Èç¹û¶ÁÈ¡×´Ì¬²»ÊÇ IOState::OK£¬Ôò¹Ø±ÕÁ¬½Ó£»·ñÔò£¬½«´¦ÀíÈÎÎñÌá½»µ½Ïß³Ì³Ø£¬¸ù¾İ´¦Àí½á¹û¾ö¶¨ÊÇÔÙ´Î×¢²á¶ÁÊÂ¼ş»¹ÊÇĞ´ÊÂ¼ş
+        //è¯»äº‹ä»¶ã€‚å¦‚æœè¯»å–çŠ¶æ€ä¸æ˜¯ IOState::OKï¼Œåˆ™å…³é—­è¿æ¥ï¼›å¦åˆ™ï¼Œå°†å¤„ç†ä»»åŠ¡æäº¤åˆ°çº¿ç¨‹æ± ï¼Œæ ¹æ®å¤„ç†ç»“æœå†³å®šæ˜¯å†æ¬¡æ³¨å†Œè¯»äº‹ä»¶è¿˜æ˜¯å†™äº‹ä»¶
         else if (tag == EventTag::READ) {
 #ifdef _WIN32
-            // Windows ÏÂÊı¾İÒÑ¾­ÔÚHandlerµÄbufferÖĞ
+            // Windows ä¸‹æ•°æ®å·²ç»åœ¨Handlerçš„bufferä¸­
             thread_pool.submit([&, h = m_handlers[fd], fd = fd]() {
                 auto state = h->work(m_config.mapping_path, m_rpc_funcs);
                 if (state == IOState::PENDING) {
@@ -221,7 +226,7 @@ void Reactor::run() {
 #endif
             }
 
-        //Ğ´ÊÂ¼ş¡£µ÷ÓÃ´¦Àí³ÌĞòµÄ write º¯ÊıĞ´ÈëÊı¾İ¡£¸ù¾İĞ´Èë×´Ì¬£¬¾ö¶¨ÊÇÔÙ´Î×¢²áĞ´ÊÂ¼ş¡¢¶ÁÊÂ¼ş»¹ÊÇ¹Ø±ÕÁ¬½Ó
+        //å†™äº‹ä»¶ã€‚è°ƒç”¨å¤„ç†ç¨‹åºçš„ write å‡½æ•°å†™å…¥æ•°æ®ã€‚æ ¹æ®å†™å…¥çŠ¶æ€ï¼Œå†³å®šæ˜¯å†æ¬¡æ³¨å†Œå†™äº‹ä»¶ã€è¯»äº‹ä»¶è¿˜æ˜¯å…³é—­è¿æ¥
         else if (tag == EventTag::WRITE) {
 #ifdef _WIN32
             close_connection(fd);//temp
