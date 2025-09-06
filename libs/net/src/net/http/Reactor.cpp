@@ -6,6 +6,7 @@
 #include <os.h>
 #include <thread_pool.h>
 #include <thread_pool_simple.h>
+#include <thread_pool_qt.h>
 #ifdef WIN32
 #include "../../libs/net/IocpSelector.h"
 #include "../../libs/net/post.h"
@@ -104,7 +105,8 @@ void Reactor::run() {
     //创建处理客户端请求的线程池
     size_t size = m_config.working_thread_num;
     //auto thread_pool = thread::ThreadPool(size);
-    auto thread_pool = ThreadPoolSimple(size);
+    auto thread_pool = ThreadPoolSimple(size);//1776336 pages/min
+    //auto thread_pool = ThreadPoolQt(size);//1574628 pages/min
 
     //创建定时器，用于检查连接的空闲时间
 #ifdef _WIN32

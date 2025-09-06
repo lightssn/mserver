@@ -11,6 +11,7 @@ class ThreadPoolSimple {
     public:
         explicit ThreadPoolSimple(size_t thread_count) : _stop(false) {//构造，依次往线程池加入线程函数：循环{取任务，线程同步，执行}
             for (size_t i = 0; i < thread_count; ++i) {
+#if 0//测试lambda内不引用函数，无性能区别
                 _threads.emplace_back([this] {
                     while (true) {
                         function<void()> task;
@@ -28,6 +29,12 @@ class ThreadPoolSimple {
                         task();//执行
                         }//while
                     });//emplace_back lambda
+#else
+                //thread thread(threadWork);//错误写法
+                //_threads.emplace_back(threadWork);//错误写法
+                //非静态成员函数作为线程函数时需要this指针，让线程知道该操作哪个对象
+                _threads.emplace_back([this] { threadWork(); });//对比上文lambda无性能差异
+#endif
                 }//for
             }//ThreadPoolSimple
         ~ThreadPoolSimple() {//析构：停止并等待线程释放
@@ -90,5 +97,35 @@ class ThreadPoolSimple {
                 }
             _threads.clear();
             }
+private:
+    void threadWork() {
+        while (true) {
+#if 1//取出单个任务执行，无性能差异
+            function<void()> task;
+            {
+                unique_lock<mutex> lock(_mutex);
+                _condition.wait(lock, [this] { return _stop || !_queue.empty(); });
+                if (_stop && _queue.empty()) return;
+                task = move(_queue.front());
+                _queue.pop();
+            }
+            task();
+#else//取出多个任务执行
+            vector<function<void()>> tasks;
+            {
+                unique_lock<mutex> lock(_mutex);
+                _condition.wait(lock, [this] { return _stop || !_queue.empty(); });
+                while (!_queue.empty() && tasks.size() < 10) {
+                    tasks.push_back(move(_queue.front()));
+                    _queue.pop();
+                }
+            }
+            //cout << "tasks.size:" << tasks.size() << endl;//输出1或2
+            for (auto& task : tasks) {
+                task();
+            }
+#endif
+        }
+    }
     };//class ThreadPoolSimple
 #endif // THREAD_POOL_SIMPLE_H

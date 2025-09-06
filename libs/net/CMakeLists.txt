@@ -14,3 +14,5 @@ target_link_libraries(${PROJECT_NAME} PUBLIC json_lib)
 target_link_libraries(${PROJECT_NAME} PRIVATE thread)
 #PUBLIC使依赖此库的目标自动获得头文件路径
 target_include_directories(${PROJECT_NAME} PUBLIC include)
+target_include_directories(${PROJECT_NAME} PRIVATE ${Qt5Core_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Xml Qt5::Sql Qt5::Concurrent)

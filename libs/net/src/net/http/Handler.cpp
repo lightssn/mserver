@@ -130,8 +130,8 @@ auto Handler::work(string_view html_dir, RpcFuncTable &rpc_table) -> IOState {//
         m_response_buffer.file_size = file_state.st_size;
         m_keep_alive = request.keep_alive;
         }
-    //打印请求信息
-    if constexpr (true)
+    //打印请求信息，不打印为2293236 pages/min
+    if constexpr (false)
         fmt::println(
             R"([{}][{}] method="{}", url2="{}", version="{}", host="{}", keep-alive={}, content-length={})",
             get_addr_str(), static_cast<short>(m_response_buffer.code),
