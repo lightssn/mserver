@@ -1,24 +1,13 @@
 #ifndef CPP_SIMPLE_WEB_SERVER_HTTP_HPP
 #define CPP_SIMPLE_WEB_SERVER_HTTP_HPP
-#include "rpc.h"
-#include <array>
-#include <iostream>
-#include <memory>
-#include <mutex>
-#include <numeric>
-#include <shared_mutex>
-#include <string_view>
-#include <unordered_map>
-#include <vector>
 #ifdef WIN32
-#include <winsock2.h>
 #else
-#include <netinet/in.h>
 #include <sys/epoll.h>
 #endif
+#include "rpc.h"
+#include "../../common/stl.h"
 
 namespace m::net::http {
-using namespace std;
 using RpcFuncTable = unordered_map<string, rpc::HandlerType>;
 static constexpr string_view default_html_dir = "/var/www/html";
 static constexpr string_view default_index_page_name = "index.html";
@@ -173,15 +162,15 @@ class Handler {
         bool m_keep_alive;
 
     public:
-        chrono::steady_clock::time_point m_last_alive_time, m_lazy_current_time;
+        steady_clock::time_point m_last_alive_time, m_lazy_current_time;
         friend class Reactor;
-        explicit Handler(chrono::steady_clock::time_point, const sockaddr_in &);
+        explicit Handler(steady_clock::time_point, const sockaddr_in &);
         [[nodiscard]] string get_addr_str() const;
         IOState read(int fd);
         IOState work(string_view html_dir, RpcFuncTable  &);
         IOState write(int fd);
         void clear();
-        void update_current_time(chrono::steady_clock::time_point);
+        void update_current_time(steady_clock::time_point);
     };
 
 class Acceptor {
@@ -192,26 +181,25 @@ class Acceptor {
         Acceptor() = default;
     };
 
-class Reactor {
-    vector<shared_ptr<Handler>> m_handlers;
-    int m_server_fd;//服务端套接字
-    RpcFuncTable m_rpc_funcs;//映射表
-    public:
-        constexpr static inline size_t MAX_FD = 65536;
-        struct Config {
-            string_view ip;
-            int port;
-            string_view mapping_path = default_html_dir;
-            size_t working_thread_num = 4, max_idle_seconds = 30, listen_size = 5, selector_size = 5;
-            };
-    private:
-        Config m_config;
+struct Config {
+    string_view ip;
+    int port;
+    string_view mapping_path = default_html_dir;
+    size_t working_thread_num = 4, max_idle_seconds = 30, listen_size = 5, selector_size = 5;
+};
 
+class Reactor {
+    vector<shared_ptr<Handler>> _handlers;
+    int _server_fd;//服务端套接字
+    RpcFuncTable _rpc_funcs;//映射表
+    atomic<bool> _stop;
+    Config _config;
     public:
-        explicit Reactor(const Config &);
+        explicit Reactor(const Config&);
+        ~Reactor();
+        constexpr static inline size_t MAX_FD = 65536;
         void run();
 
-        ~Reactor();
         template <typename Func>
         //将RPC远程过程调用的函数注册到映射表。将函数名与默认路由前缀组合成 URL，并将其与一个包装后的函数一起插入到映射表中，实现 RPC 函数的注册和调用。并处理 JSON 解析和类型转换的错误情况
         bool rpc_register(string const &name, Func func) {

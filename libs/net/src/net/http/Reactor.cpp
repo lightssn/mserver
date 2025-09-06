@@ -8,12 +8,8 @@
 #include <thread_pool_simple.h>
 #include <thread_pool_qt.h>
 #ifdef WIN32
-#include "../../libs/net/IocpSelector.h"
-#include "../../libs/net/post.h"
-#include <winsock2.h>//必须​在windows.h前包含
-#include <windows.h>
 #include <ws2tcpip.h>//InetPton
-#include <mswsock.h>//AcceptEx
+#include "../../libs/net/IOCPSelector.h"
 #else
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -23,8 +19,7 @@ constexpr auto DEBUG = false;
 using namespace std;
 
 namespace m::net::http {
-//创建TCP服务器套接字，绑定IP和端口，开始监听
-Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD), m_rpc_funcs{} {
+Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_funcs{} {
 #ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -32,26 +27,68 @@ Reactor::Reactor(const Reactor::Config &cfg) : m_config{cfg}, m_handlers(MAX_FD)
         //throw make_exception_ptr(runtime_error("WSAStartup failed"));//抛出共享异常对象指针
         }
 #endif
-    //创建 TCP 套接字
-    m_server_fd = tcp::create_socket();
 
+    //创建服务端套接字
+#ifdef _WIN32
+    _server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#else
+    _server_fd = socket(PF_INET, SOCK_STREAM, 0);
+#endif
+    if (_server_fd < 0) {
+        throw runtime_error{ "cannot create socket" };
+    }
     //设置套接字SO_LINGER，延迟关闭，延迟时间为1秒
     //  struct linger tmp {1, 1};
-    //  setsockopt(m_server_fd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+    //  setsockopt(_server_fd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
 
-    //设置套接字SO_REUSEADDR，允许地址复用。服务器重启时，如果没有设置该选项，可能会因为旧的连接还处于 TIME_WAIT 状态而导致无法立即绑定到相同的地址和端口
+    //设置 SO_REUSEADDR 允许端口复用。服务器重启时，如果没有设置该选项，可能会因为旧的连接还处于 TIME_WAIT 状态而导致无法立即绑定到相同的地址和端口
     int flag = 1;//表示启用
-    setsockopt(m_server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&flag), sizeof(flag));
+    if (setsockopt(_server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&flag), sizeof(flag)) < 0) {
+        throw runtime_error("setsockopt failed.");
+    }
+    //绑定ip和端口到套接字
+    string ip = cfg.ip.data();
+    struct sockaddr_in address {};
+    memset(&address, 0, sizeof(address)); //用memset替代 bzero初始化为零
+    address.sin_family = AF_INET;  // 使用 IPv4
+    size_t protocol_pos = ip.find("://");
+    if (protocol_pos != string_view::npos) {
+        ip = ip.substr(protocol_pos + 3); //去掉http://
+    }
+    //字符串ip转二进制
+#ifdef _WIN32
+    if (InetPton(AF_INET, ip.data(), &address.sin_addr) != 1) {
+        throw runtime_error("Invalid IP address: " + string(ip));
+    }
+#else
+    if (inet_pton(AF_INET, ip.data(), &address.sin_addr) <= 0) {
+        throw runtime_error("Invalid IP address: " + string(ip));
+        //throw runtime_error{ fmt::format("Invalid IP address: {}", ip) };//编译期格式化
+    }
+#endif
+    address.sin_port = htons(static_cast<u_short>(cfg.port));  //将端口号从主机字节序转换为网络字节序，Windows 需要显式转换为 u_short
+#ifdef _WIN32
+    if (::bind(_server_fd, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        throw runtime_error{ fmt::format("Cannot bind on {}:{}, error code: {}", ip, cfg.port, err) };
+    }
+#else
+    if (bind(_server_fd, (struct sockaddr*)&address, sizeof(address)) != 0) {
+        throw runtime_error{ fmt::format("Cannot bind on {}:{}, error: {}", ip, cfg.port, strerror(errno)) };
+    }
+#endif
 
-    tcp::bind(m_server_fd, cfg.ip, cfg.port);//绑定套接字的IP和端口
-    tcp::listen(m_server_fd, cfg.listen_size);//开始监听并设置监听队列长度（允许等待处理的客户端连接请求数）
+    //监听并设置监听队列长度(允许等待处理的客户端连接请求数)
+    if (::listen(_server_fd, cfg.listen_size) != 0) {
+        throw runtime_error{ "bad listen" };
+    }
     fmt::println("[INFO] Server listening on {}:{}", cfg.ip, cfg.port);
     }//Reactor
 
 Reactor::~Reactor() {
-    closesocket(m_server_fd);
-    for (int i = 0; i < m_handlers.size(); ++i)
-        if (m_handlers[i] != nullptr)
+    closesocket(_server_fd);
+    for (int i = 0; i < _handlers.size(); ++i)
+        if (_handlers[i] != nullptr)
             closesocket(i);
 #ifdef _WIN32
     if (WSACleanup() == SOCKET_ERROR) {
@@ -66,25 +103,25 @@ void Reactor::run() {
 
     //管理I/O事件对象，传入服务器套接字描述符和选择器大小
 #ifdef _WIN32
-    auto selector = IocpSelector(m_server_fd, m_config.selector_size);
+    auto selector = IOCPSelector(_server_fd, _config.selector_size);
 #else
-    auto selector = EpollSelector(m_server_fd, m_config.selector_size);
+    auto selector = EpollSelector(_server_fd, _config.selector_size);
 #endif
 
     //lambda，关闭指定文件描述符对应的连接，包括释放处理程序、从选择器中注销和关闭套接字
     auto close_connection = [&](int fd) {
-        m_handlers[fd].reset();
+        _handlers[fd].reset();
         selector.unregister(fd);
         closesocket(fd);
         };
 
     //lambda，添加新连接，注册到选择器读事件，创建处理程序
     auto add_connection = [&](int client_fd, const sockaddr_in &client_addr) {
-        auto& handler = m_handlers[client_fd];
+        auto& handler = _handlers[client_fd];
         handler = make_shared<Handler>(lazy_current_time, client_addr);
 #ifdef _WIN32
         //IOCP 中，​必须先发起一个 I/O 操作（如 WSARecv）​，然后才能等待完成通知。如果不调用 post_recv，IOCP 不会自动监测该套接字的可读事件
-        auto state = m_handlers[client_fd]->post_recv(client_fd);
+        auto state = _handlers[client_fd]->post_recv(client_fd);
         if (state != IOState::OK) {
             close_connection(client_fd);
             return;
@@ -96,14 +133,14 @@ void Reactor::run() {
 #ifdef _WIN32
     // Windows 需要预先投递AcceptEx
     for (int i = 0; i < 5; i++) {
-        post_accept_ex(m_server_fd);
+        post_accept_ex(_server_fd);
     }
 #endif
     //注册监听socket
-    selector.register_on_listening_lt(m_server_fd);
+    selector.register_on_listening_lt(_server_fd);
 
     //创建处理客户端请求的线程池
-    size_t size = m_config.working_thread_num;
+    size_t size = _config.working_thread_num;
     //auto thread_pool = thread::ThreadPool(size);
     auto thread_pool = ThreadPoolSimple(size);//1776336 pages/min
     //auto thread_pool = ThreadPoolQt(size);//1574628 pages/min
@@ -119,15 +156,15 @@ void Reactor::run() {
 
     //设置定时器(首次触发和触发间隔都为30s)
     LARGE_INTEGER liDueTime;
-    liDueTime.QuadPart = -static_cast<LONGLONG>(m_config.max_idle_seconds) * 10000000LL;
-    if (!SetWaitableTimer(hTimer, &liDueTime, m_config.max_idle_seconds * 1000, NULL, NULL, FALSE)) {
+    liDueTime.QuadPart = -static_cast<LONGLONG>(_config.max_idle_seconds) * 10000000LL;
+    if (!SetWaitableTimer(hTimer, &liDueTime, _config.max_idle_seconds * 1000, NULL, NULL, FALSE)) {
         CloseHandle(hTimer);
         throw runtime_error("Failed to SetWaitableTimer");
     }
 #else
 
 #endif
-    auto max_connection_idle_time = chrono::seconds{ m_config.max_idle_seconds };
+    auto max_connection_idle_time = chrono::seconds{ _config.max_idle_seconds };
     auto idle_timer = m::os::Timer(max_connection_idle_time.count(), 0);
     auto idle_timer_fd = idle_timer.get_fd();
     selector.register_timer(idle_timer_fd);
@@ -135,21 +172,21 @@ void Reactor::run() {
     //lambda，空闲连接处理。遍历所有处理程序，检查每个连接的空闲时间。如果超过max_connection_idle_time，关闭连接；否则，更新连接最后活跃时间
     auto remove_idle_connections = [&] {
         lazy_current_time = chrono::steady_clock::now();
-        for (int i = 0; i < m_handlers.size(); ++i) {
-            if (m_handlers[i] == nullptr)
+        for (int i = 0; i < _handlers.size(); ++i) {
+            if (_handlers[i] == nullptr)
                 continue;
-            if (m_handlers[i]->m_last_alive_time + max_connection_idle_time <
+            if (_handlers[i]->m_last_alive_time + max_connection_idle_time <
                 lazy_current_time)
                 close_connection(i);
             else
-                m_handlers[i]->update_current_time(lazy_current_time);
+                _handlers[i]->update_current_time(lazy_current_time);
         }
         };
 
     //事件循环，从选择器中获取下一个事件并处理
     while (true) {
 #ifdef _WIN32
-        using EventTag = IocpSelector::Event::Tag;
+        using EventTag = IOCPSelector::Event::Tag;
 #else
         using EventTag = EpollSelector::Event::Tag;
 #endif
@@ -160,11 +197,11 @@ void Reactor::run() {
             //接受新连接
 #ifdef _WIN32
 // Windows 下使用AcceptEx接受连接
-            auto [client_fd, client_addr] = selector.accept_async(m_server_fd);
+            auto [client_fd, client_addr] = selector.accept_async(_server_fd);
             // 继续投递新的AcceptEx
-            post_accept_ex(m_server_fd);
+            post_accept_ex(_server_fd);
 #else
-            auto &&[client_fd, client_addr] = m::net::tcp::accept(m_server_fd);
+            auto &&[client_fd, client_addr] = m::net::tcp::accept(_server_fd);
 #endif
             add_connection(client_fd, client_addr);//处理新连接
             if constexpr (DEBUG) {
@@ -189,7 +226,7 @@ void Reactor::run() {
         }
 #endif
 
-        auto &handler = m_handlers[fd];
+        auto &handler = _handlers[fd];
 
         //关闭事件
         if (tag == EventTag::CLOSE) {
@@ -203,8 +240,8 @@ void Reactor::run() {
         else if (tag == EventTag::READ) {
 #ifdef _WIN32
             // Windows 下数据已经在Handler的buffer中
-            thread_pool.submit([&, h = m_handlers[fd], fd = fd]() {
-                auto state = h->work(m_config.mapping_path, m_rpc_funcs);
+            thread_pool.submit([&, h = _handlers[fd], fd = fd]() {
+                auto state = h->work(_config.mapping_path, _rpc_funcs);
                 if (state == IOState::PENDING) {
                     h->post_recv(fd);
                     }
@@ -218,8 +255,8 @@ void Reactor::run() {
                 close_connection(fd);
                 continue;
                 }
-            thread_pool.submit([&, h = m_handlers[fd], fd = fd]() {
-                auto state = h->work(m_config.mapping_path, m_rpc_funcs);
+            thread_pool.submit([&, h = _handlers[fd], fd = fd]() {
+                auto state = h->work(_config.mapping_path, _rpc_funcs);
                 if (state == IOState::PENDING)
                     selector.read_again_on(fd);
                 else

@@ -7,6 +7,7 @@
 #include <os.h>
 #include <test_type.h>
 #include "../../libs/net/server.h"
+#include "../../libs/net/iocpserver.h"
 using namespace m;
 using namespace std::chrono_literals;
 using namespace MyTypeList;
@@ -29,7 +30,7 @@ int main(int argc, char *argv[]) {
     size_t working_thread_num;
 #ifndef NDEBUG
     ip = "http://127.0.0.1";
-    port = 1090;
+    port = 8080;
     working_thread_num = 5;
 #else
     try {
@@ -53,8 +54,27 @@ int main(int argc, char *argv[]) {
 
     //mnet::Server mserver(0000, "tcp");
 
+
     //创建并配置基于http的rpc服务器
-    net::http::Reactor::Config config{ip,
+#ifdef WIN32
+    try {
+        IOCPServer server(port);
+        //设置控制台Ctrl+C处理
+        SetConsoleCtrlHandler([](DWORD dwCtrlType) -> BOOL {
+            if (dwCtrlType == CTRL_C_EVENT) {
+                exit(0);
+            }
+            return TRUE;
+            }, TRUE);
+        server.run();
+        safe_print("Server has been shut down.");
+    }
+    catch (const exception& e) {
+        cerr << "IOCPServer error: " << e.what() << endl;
+        return 1;
+    }
+#else
+    net::http::Config config{ ip,
                                       port,
                                       html_root_dir,//html根目录
                                       working_thread_num,//工作线程数
@@ -75,5 +95,6 @@ int main(int argc, char *argv[]) {
         cerr << "Reactor error: " << e.what() << endl;
         return -1;
     }
+#endif
     return 0;
     }//main

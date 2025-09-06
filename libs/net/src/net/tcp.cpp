@@ -12,7 +12,7 @@
 using namespace std;
 namespace m::net::tcp {
 int create_socket() {
-    auto fd = socket(PF_INET, SOCK_STREAM, 0);//创建IPv4 TCP套接字
+    int fd = socket(PF_INET, SOCK_STREAM, 0);//创建IPv4 TCP套接字
     if (fd < 0)
         throw runtime_error{"cannot create new tcp socket"};
     return fd;

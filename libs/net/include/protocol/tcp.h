@@ -7,8 +7,6 @@
 #include <netinet/in.h>
 #endif
 namespace m::net::tcp {
-// create some tcp socket file descriptor using sys/socket.h
-int create_socket();
 
 // throw std::runtime_error when fails
 void bind(int fd, std::string_view ip, size_t port);

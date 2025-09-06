@@ -131,7 +131,7 @@ auto Handler::work(string_view html_dir, RpcFuncTable &rpc_table) -> IOState {//
         m_keep_alive = request.keep_alive;
         }
     //打印请求信息，不打印为2293236 pages/min
-    if constexpr (false)
+    if constexpr (true)
         fmt::println(
             R"([{}][{}] method="{}", url2="{}", version="{}", host="{}", keep-alive={}, content-length={})",
             get_addr_str(), static_cast<short>(m_response_buffer.code),
