@@ -56,16 +56,21 @@ int main(int argc, char *argv[]) {
 
 
     //创建并配置基于http的rpc服务器
-#ifdef WIN32
+//#ifdef WIN32
+#if 0
     try {
         IOCPServer server(port);
-        //设置控制台Ctrl+C处理
+        //捕获Ctrl+C，完成I/O再退出
         SetConsoleCtrlHandler([](DWORD dwCtrlType) -> BOOL {
-            if (dwCtrlType == CTRL_C_EVENT) {
-                exit(0);
-            }
+            if (dwCtrlType == CTRL_C_EVENT) { exit(0); }
             return TRUE;
             }, TRUE);
+        //注册rpc服务，服务名echo，处理函数为lambda函数：传入字符串，返回带[Server Echo]前缀的字符串
+        server.rpc_register("echo", [](const string& x) {
+            return string{ "[Server Echo] " } + x;
+            });
+        //注册rpc服务，服务名calculate，处理函数为fun
+        server.rpc_register("calculate", fun);
         server.run();
         safe_print("Server has been shut down.");
     }

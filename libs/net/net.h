@@ -1,15 +1,18 @@
-#include <iostream>
+ï»¿#ifndef NET_H
+#define NET_H
 #include <string>
 #include <cstring>
 #include <set>
 
-#ifdef _WIN32
-#include <winsock2.h>//recv
-#include <ws2tcpip.h>//socklen_t
-//#pragma comment(lib, "ws2_32.lib")//cppÀïÎŞĞ§£¿ĞèÔÚcmake»ò±àÒëÊ±Ö¸¶¨
+#ifdef WIN32
+#include <winsock2.h>//recv, å¿…é¡»â€‹åœ¨windows.hå‰åŒ…å«
+#include <mswsock.h>//AcceptEx
+#include <ws2tcpip.h>//socklen_t, inet_pton
+#include <windows.h>
 #else
 #include <sys/socket.h>//recv
 #include <arpa/inet.h>//inet_ntoa
+#include <netinet/in.h>
 #include <unistd.h>//read
 #define INVALID_SOCKET -1
 #endif
@@ -19,36 +22,4 @@ constexpr auto DEBUG = false;
 #define BUFFER_SIZE 1024
 
 std::set<std::string> protocols = { "tcp", "udp", "http", "https" };
-
-namespace mnet {
-//³õÊ¼»¯Winsock
-bool init() {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed." << std::endl;
-        return false;
-        }
-#endif
-    return true;
-    }
-
-void stop(socklen_t fd) {
-    if (fd != (socklen_t)INVALID_SOCKET) {
-#ifdef _WIN32
-        closesocket(fd);
-#else
-        close(fd);
-#endif
-        fd = (socklen_t)INVALID_SOCKET;
-        }
-    std::cout << "stopped " << std::endl;
-    return;
-    }
-
-void end() {
-#ifdef _WIN32
-    WSACleanup();
-#endif
-    }
-}
+#endif//NET_H

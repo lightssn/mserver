@@ -89,7 +89,7 @@ struct ResponseBuffer {
 class EpollSelector {
     private:
         constexpr static int MAX_EVENT_NUM = 10000;
-        array<epoll_event, MAX_EVENT_NUM> m_events{};
+        std::array<epoll_event, MAX_EVENT_NUM> m_events{};
         int m_timeout{-1};
         int m_epoll_fd, m_listen_fd;
         size_t m_current_event_num{0}, m_current_event_index{0};
@@ -204,16 +204,16 @@ class Reactor {
         //将RPC远程过程调用的函数注册到映射表。将函数名与默认路由前缀组合成 URL，并将其与一个包装后的函数一起插入到映射表中，实现 RPC 函数的注册和调用。并处理 JSON 解析和类型转换的错误情况
         bool rpc_register(string const &name, Func func) {
             auto url = string{rpc::default_route_prefix} + name;//拼接完整url
-            if (m_rpc_funcs.find(url) != m_rpc_funcs.end())//如果映射表已存在该url，注册失败，返回false
+            if (_rpc_funcs.find(url) != _rpc_funcs.end())//如果映射表已存在该url，注册失败，返回false
                 return false;
 
             //lambda函数，处理url
-            m_rpc_funcs[url] = [func](string_view content) -> string {
+            _rpc_funcs[url] = [func](string_view content) -> string {
                 using namespace MyJson;
                 auto j = Json::from_json_text(content);//将lambda输入的content解析为json
                 if (!j.has_value())//解析失败时，返回错误信息的json
                     return R"({"rpc_error":"broken client json"})";
-                using ArgT = remove_cv_t<remove_reference_t<rpc::FirstArgT<Func>>>;//获取输入func的第一个参数类型
+                using ArgT = std::remove_cv_t<std::remove_reference_t<rpc::FirstArgT<Func>>>;//获取输入func的第一个参数类型
 //      static_assert(is_same_v<ArgT, int>);
                 auto arg = j.value().to_type<ArgT>();//将解析后的json转为该类型
                 if (!arg.has_value())//转换失败时，返回错误信息的json
