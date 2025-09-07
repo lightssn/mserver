@@ -56,8 +56,8 @@ int main(int argc, char *argv[]) {
 
 
     //创建并配置基于http的rpc服务器
-//#ifdef WIN32
-#if 0
+#ifdef WIN32
+//#if 0
     try {
         IOCPServer server(port);
         //捕获Ctrl+C，完成I/O再退出

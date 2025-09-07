@@ -1,11 +1,15 @@
 #ifndef CPP_SIMPLE_WEB_SERVER_RPC_HPP
 #define CPP_SIMPLE_WEB_SERVER_RPC_HPP
 #include "my_json/core.h"
-#include "../../net.h"
 #include "type_traits"
 #include <functional>
 #include <string_view>
-
+#ifdef WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netinet/in.h>
+#endif
 
 namespace m::net::rpc::detail {
 using namespace std;

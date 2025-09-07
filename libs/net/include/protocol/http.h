@@ -128,6 +128,7 @@ class Handler {
     char read_buffer[8192];
     char write_buffer[8192];
 
+public:
     IOState post_recv(int fd) {
         ZeroMemory(&read_overlapped, sizeof(OVERLAPPED));
         read_buf.buf = read_buffer;
@@ -153,6 +154,7 @@ class Handler {
         return IOState::OK;
     }
 #endif
+private:
         constexpr static size_t READ_BUFFER_SIZE = 2048;
         sockaddr_in m_addr;
         string m_read_buffer;

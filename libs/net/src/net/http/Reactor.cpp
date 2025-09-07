@@ -15,10 +15,11 @@
 #include <unistd.h>
 #define closesocket close
 #endif
+constexpr auto DEBUG = false;
 using namespace std;
 
 namespace m::net::http {
-Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_funcs{}, _stop(false) {
+Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_funcs{} {
 #ifdef _WIN32
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -66,8 +67,6 @@ Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_func
     }
 #endif
     address.sin_port = htons(static_cast<u_short>(cfg.port));  //将端口号从主机字节序转换为网络字节序，Windows 需要显式转换为 u_short
-
-    //绑定地址
 #ifdef _WIN32
     if (::bind(_server_fd, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
@@ -80,7 +79,7 @@ Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_func
 #endif
 
     //监听并设置监听队列长度(允许等待处理的客户端连接请求数)
-    if (listen(_server_fd, cfg.listen_size) != 0) {
+    if (::listen(_server_fd, cfg.listen_size) != 0) {
         throw runtime_error{ "bad listen" };
     }
     fmt::println("[INFO] Server listening on {}:{}", cfg.ip, cfg.port);
@@ -116,15 +115,29 @@ void Reactor::run() {
         closesocket(fd);
         };
 
-    //注册监听socket
-    selector.register_on_listening_lt(_server_fd);
-
     //lambda，添加新连接，注册到选择器读事件，创建处理程序
     auto add_connection = [&](int client_fd, const sockaddr_in &client_addr) {
         auto& handler = _handlers[client_fd];
         handler = make_shared<Handler>(lazy_current_time, client_addr);
+#ifdef _WIN32
+        //IOCP 中，​必须先发起一个 I/O 操作（如 WSARecv）​，然后才能等待完成通知。如果不调用 post_recv，IOCP 不会自动监测该套接字的可读事件
+        auto state = _handlers[client_fd]->post_recv(client_fd);
+        if (state != IOState::OK) {
+            close_connection(client_fd);
+            return;
+            }
+#endif
         selector.register_on_reading(client_fd);
         };
+
+#ifdef _WIN32
+    // Windows 需要预先投递AcceptEx
+    for (int i = 0; i < 5; i++) {
+        post_accept_ex(_server_fd);
+    }
+#endif
+    //注册监听socket
+    selector.register_on_listening_lt(_server_fd);
 
     //创建处理客户端请求的线程池
     size_t size = _config.working_thread_num;
@@ -171,7 +184,7 @@ void Reactor::run() {
         };
 
     //事件循环，从选择器中获取下一个事件并处理
-    while (!_stop) {
+    while (true) {
 #ifdef _WIN32
         using EventTag = IOCPSelector::Event::Tag;
 #else
@@ -181,20 +194,15 @@ void Reactor::run() {
 
         //新连接事件
         if (tag == EventTag::CONNECTION) {
-            //接收连接
-            struct sockaddr_in client_addr {};
-            socklen_t client_addr_length = sizeof(client_addr);
-            int client_fd = accept(_server_fd, (struct sockaddr*)&client_addr, &client_addr_length);
-            if (client_fd < 0) {
+            //接受新连接
 #ifdef _WIN32
-                auto error = WSAGetLastError();
+// Windows 下使用AcceptEx接受连接
+            auto [client_fd, client_addr] = selector.accept_async(_server_fd);
+            // 继续投递新的AcceptEx
+            post_accept_ex(_server_fd);
 #else
-                auto error = errno;
+            auto &&[client_fd, client_addr] = m::net::tcp::accept(_server_fd);
 #endif
-                cerr << "accept failed: " << error << endl;
-                throw runtime_error{ "bad accept" };
-            }
-
             add_connection(client_fd, client_addr);//处理新连接
             if constexpr (DEBUG) {
                 //fmt::println("[INFO] hello from {}:{} on fd {}",
@@ -281,6 +289,6 @@ void Reactor::run() {
                 close_connection(fd);
 #endif
             }
-        }//while(!_stop)
+        }//while(true)
     }//run()
 } // namespace m::net::http
