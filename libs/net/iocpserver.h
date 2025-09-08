@@ -11,7 +11,7 @@ using m::net::http::IOState;
 #define AYSNC_ACCEPT
 
 // 定义每个IOCP的工作线程数
-const int NUM_THREADS = 1;
+const int NUM_THREADS = 5;
 
 mutex cout_mutex;
 template<typename... Args>
@@ -50,6 +50,9 @@ class IOCPServer {
         atomic<bool> _stop;
     public:
         IOCPServer(int port) : _server_fd(INVALID_SOCKET), _iocp_handle(NULL), _pool(NUM_THREADS), _rpc_funcs{} {
+#ifdef _DEBUG
+            safe_print("server thread:", get_id());
+#endif
             //初始化 Winsock
             WSADATA wsaData;
             if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -76,6 +79,7 @@ class IOCPServer {
             server_addr.sin_port = htons(port);
 
             if (bind(_server_fd, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+				cerr << "bind failed: " << WSAGetLastError() << endl;
                 throw runtime_error("bind failed: " + WSAGetLastError());
                 }
 
@@ -138,7 +142,7 @@ class IOCPServer {
             cout << "Server started. Waiting for connections..." << endl;
 
 #ifdef AYSNC_ACCEPT
-            for (int i = 0; i < 1; ++i) {
+            for (int i = 0; i < NUM_THREADS; ++i) {
                 accept_async_session();
                 }
 #endif
@@ -152,67 +156,37 @@ class IOCPServer {
                 _pool.submit([&, handlers = _handlers]() {
                     //test_connect();//测试是否能连接
 
-                    DWORD bytes_transferred = 0;
+                    DWORD bytes = 0;
                     ULONG_PTR completion_key = 0;
                     LPOVERLAPPED overlapped = nullptr;
                     BOOL result = GetQueuedCompletionStatus(
                                       _iocp_handle,
-                                      &bytes_transferred,/*客户端断开则=0*/
+                                      &bytes,/*客户端断开则=0*/
                                       &completion_key,
                                       &overlapped,
                                       INFINITE /*设为0立即返回*/
                                   );
 
-                    //新连接事件(AcceptEx完成)
-                    if (bytes_transferred == 0) {
-                        Session* session = CONTAINING_RECORD(overlapped, Session, overlapped);
-                        SOCKET client_fd = session->socket;
-                        sockaddr_in client_addr = session->client_addr;
+                    if (!result/* || bytes == 0*/) {
+                        // 客户端断开连接
+                        safe_print("Client disconnected");
+                        return;
+                    }
 
-                        // 解析 AcceptEx 缓冲区中的远程地址
-                        sockaddr_in* remote_addr = reinterpret_cast<sockaddr_in*>(session->buffer.data() + sizeof(sockaddr_in) + 16);
-                        session->client_addr = *remote_addr;
+                    //取出会话对象
+                    Session* session = CONTAINING_RECORD(overlapped, Session, overlapped);//用win api从成员变量地址反推对象地址
+                    //auto session = reinterpret_cast<Session*>(completion_key);//也有效，需在新连接事件重新关联iocp
+                    if (!session) return;
 
-                        setsockopt(session->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&_server_fd, sizeof(_server_fd));
-                        //重新关联客户端套接字到 IOCP（使用 Session* 作为 completion_key）
-                        //CreateIoCompletionPort((HANDLE)client_fd, _iocp_handle, (ULONG_PTR)session, 0);
-                        safe_print("Get AcceptEx from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port));
+                    if (session->operation == Session::OP_SEND) {
+                        return;  //忽略发送完成事件
+                    }
 
-                        // 继续投递新的 AcceptEx（保持并发）
-                        accept_async_session();
-
-                        //投递
-                        WSARecv(client_fd, &session->wsaBuf, 1, &bytes_transferred, &session->flags, &session->overlapped, NULL);
+                    if (bytes == 0) { //新连接事件(AcceptEx完成)
+                        post_accept(session);
                     }
                     else {//WSARecv/WSASend事件
-                        Session* session = CONTAINING_RECORD(overlapped, Session, overlapped);
-                        //auto session = reinterpret_cast<Session*>(completion_key);//无效
-                        if (!session) return;
-                        if (!result || bytes_transferred == 0) {
-                            // 客户端断开连接
-                            safe_print("Client disconnected");
-                            closesocket(session->socket);
-                            return;
-                        }
-                        if (session->operation == Session::OP_SEND) {
-                            return;  //忽略发送完成事件
-                        }
-                        
-                        //显示数据，实际为"message\0\0\0..."
-                        safe_print("Received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
-
-                        //识别字符判断是否关闭
-                        if (string_view(session->buffer.data(), session->buffer.size()).substr(0, 5) == "close") {
-                            safe_print("Received close command, shutting down server...");
-                            //发送fin包，若客户端已断开，会返回SOCKET_ERROR，且WSAGetLastError置为10053(WSAECONNABORTED)或10054(WSAECONNRESET)
-                            //shutdown(session->socket, SD_SEND);
-
-                            //关闭套接字，置为INVALID_SOCKET
-                            closesocket(session->socket);
-                            //之后WSASend/WSARecv会报错10058(WSAESOCKTNOSUPPORT)
-                            stop();
-                            return;
-                        }
+                        post_recv(session);
 
                         //检查套接字内核事件队列，决定是否继续连接，有切换内核态开销，不可频繁使用，应用心跳
                         WSANETWORKEVENTS events;
@@ -232,90 +206,14 @@ class IOCPServer {
                         }
                         //getsockopt/select/WSASend都是内核缓冲区操作，不能及时检测
 
-                        //修改数据
-                        string response = "Hello from server!";
-                        session->buffer.assign(response.begin(), response.end());
-                        session->wsaBuf.buf = session->buffer.data();
-                        session->wsaBuf.len = session->buffer.size();
-                        ZeroMemory(&session->overlapped, sizeof(OVERLAPPED));
-
-                        //发送数据
-                        DWORD bytesSent = 0;
-                        session->operation = Session::OP_SEND;
-                        if (WSASend(session->socket, &session->wsaBuf, 1, &bytesSent, 0, &session->overlapped, NULL) == SOCKET_ERROR) {
-                            if (WSAGetLastError() != WSA_IO_PENDING) {
-                                safe_print("WSASend failed: ", WSAGetLastError());
-                                closesocket(session->socket);
-                                return;
-                            }
-                        }
-
-
+                        post_send(session);
                     }
-                    return;
-
-                    auto session = reinterpret_cast<Session*>(completion_key);
-
-
-
-
-                    // 如果是 AcceptEx 完成（新连接）
-                    if (session->operation == Session::OP_ACCEPT) {
-                        // 获取客户端地址
-                        sockaddr_in* localAddr = nullptr;
-                        sockaddr_in* remoteAddr = nullptr;
-                        int localLen = sizeof(sockaddr_in) + 16;
-                        int remoteLen = sizeof(sockaddr_in) + 16;
-                        GetAcceptExSockaddrs(
-                            session->buffer.data(),  // AcceptEx 的缓冲区
-                            0,                       // 未接收数据
-                            localLen,                // 本地地址大小
-                            remoteLen,               // 远程地址大小
-                            (sockaddr**)&localAddr,  // 输出本地地址
-                            &localLen,
-                            (sockaddr**)&remoteAddr, // 输出远程地址
-                            &remoteLen
-                        );
-
-                        safe_print("New client connected: ", inet_ntoa(remoteAddr->sin_addr), ":", ntohs(remoteAddr->sin_port));
-
-                        // 继续投递新的 AcceptEx（保持并发）
-                        accept_async_session();
-
-                        // 投递 WSARecv 开始接收数据
-                        DWORD bytesReceived = 0;
-                        session->operation = Session::OP_RECV;
-                        if (WSARecv(
-                                    session->socket,
-                                    &session->wsaBuf,
-                                    1,
-                                    &bytesReceived,
-                                    &session->flags,
-                                    &session->overlapped,
-                                    NULL
-                                ) == SOCKET_ERROR) {
-                            if (WSAGetLastError() != WSA_IO_PENDING) {
-                                safe_print("WSARecv failed: ", WSAGetLastError());
-                                closesocket(session->socket);
-                                }
-                            }
-                        }//if (session->operation == ClientSession::OP_ACCEPT)
-
-
-
-                    string_view default_html_dir = "/var/www/html";
-                    //auto state = handlers[session->socket]->work(default_html_dir, _rpc_funcs);
-                    //if (state == IOState::PENDING) {
-                    //    handlers[session->socket]->post_recv(session->socket);
-                    //}
-                    //else {
-                    //    handlers[session->socket]->post_send(session->socket);
-                    //}
                     });
                 }//while (true)
             }//run
 
     private:
+		//投递同步阻塞accept
         bool accept_sync() {
             sockaddr_in client_addr;
             socklen_t addrlen = sizeof(client_addr);
@@ -360,25 +258,6 @@ class IOCPServer {
             safe_print("New client connected: ", inet_ntoa(client_addr.sin_addr), ":", ntohs(client_addr.sin_port));
             return true;
             }//accept_sync
-
-        //投递一个AcceptEx异步请求
-        bool accept_async() {
-            //有效，定位是客户端套接字没先关联iocp
-            // 将监听套接字关联到 IOCP
-            //CreateIoCompletionPort((HANDLE)_server_fd, _iocp_handle, (ULONG_PTR)nullptr, 0);
-
-            // 投递一个 AcceptEx 请求（需动态加载 AcceptEx）
-            LPFN_ACCEPTEX AcceptEx = nullptr;
-            GUID guid = WSAID_ACCEPTEX;
-            DWORD bytes;
-            WSAIoctl(_server_fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, sizeof(guid), &AcceptEx, sizeof(AcceptEx), &bytes, NULL, NULL);
-
-            SOCKET client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            char buffer[1024];
-            OVERLAPPED ov = { 0 };
-            AcceptEx(_server_fd, client_fd, buffer, 0, sizeof(sockaddr_in) + 16, sizeof(sockaddr_in) + 16, NULL, &ov);
-            return true;
-            }//accept_async
 
         //须先同步或异步投递，否则无法接收
         bool accept_async_session() {
@@ -431,89 +310,12 @@ class IOCPServer {
                 }
             }
 
-            //session->client_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-            //DWORD bytes_transferred = 0;
-            //ULONG_PTR completion_key = 0;
-            //LPOVERLAPPED overlapped = nullptr;
-            //BOOL result = GetQueuedCompletionStatus(
-            //    _iocp_handle,
-            //    &bytes_transferred,/*客户端断开则=0*/
-            //    &completion_key,
-            //    &overlapped,
-            //    INFINITE /*设为0立即返回*/
-            //);
-            //Session* ctx = CONTAINING_RECORD(overlapped, Session, overlapped);
-
-            //auto session2 = reinterpret_cast<Session*>(overlapped); // 从 OVERLAPPED 获取 Session
-            //SOCKET client_fd1 = session->socket;
-
-            //if (ctx->socket == client_fd) {
-            //    cout << "Client fd matches!" << endl;
-            //}
-            //setsockopt(session->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-            //    (char*)&_server_fd, sizeof(_server_fd));
             // 存储会话
             {
                 lock_guard<mutex> lock(_sessions_mutex);
                 _sessions[client_fd] = session;
             }
-
-            //auto session2 = reinterpret_cast<Session*>(client_fd);
-            //return true;
-            //Session* session3 = CONTAINING_RECORD(client_fd, Session, overlapped);
         }//accept_async_session
-
-        bool accept_async_session_ori() {
-            //创建客户端套接字
-            SOCKET client_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (client_fd == INVALID_SOCKET) {
-                cerr << "socket failed: " << WSAGetLastError() << endl;
-                return false;
-                }
-
-            //创建会话对象
-            auto session = make_shared<Session>();
-            session->socket = client_fd;
-            session->buffer.resize(1024);
-            session->wsaBuf.buf = session->buffer.data();
-            session->wsaBuf.len = session->buffer.size();
-            session->operation = Session::OP_ACCEPT;
-            ZeroMemory(&session->overlapped, sizeof(OVERLAPPED));
-
-            //客户端套接字关联到iocp，须在投递前操作
-            if (CreateIoCompletionPort((HANDLE)client_fd, _iocp_handle, (ULONG_PTR)session.get(), 0) == NULL) {
-                cerr << "Failed to associate client socket with IOCP: " << GetLastError() << endl;
-                closesocket(client_fd);
-                return false;
-                }
-            // 投递 AcceptEx
-            DWORD bytesReceived = 0;
-            if (AcceptEx(
-                        _server_fd,                  // 监听套接字
-                        client_fd,                   // 客户端套接字（预先创建）
-                        session->buffer.data(),      // 接收缓冲区（可选，可用于获取首个数据包）
-                        0,                           // 不接收数据（设为 0）
-                        sizeof(sockaddr_in) + 16,    // 本地地址大小
-                        sizeof(sockaddr_in) + 16,    // 远程地址大小
-                        &bytesReceived,              // 实际接收的字节数（OUT 参数）
-                        &session->overlapped         // OVERLAPPED 结构
-                    ) == FALSE) {
-                // 正常情况下，AcceptEx 会返回 FALSE，并且 WSAGetLastError = ERROR_IO_PENDING
-                if (WSAGetLastError() != WSA_IO_PENDING) {
-                    cerr << "AcceptEx failed: " << WSAGetLastError() << endl;
-                    closesocket(client_fd);
-                    return false;
-                    }
-                }
-            setsockopt(session->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-                (char*)&_server_fd, sizeof(_server_fd));
-            // 存储会话
-                {
-                lock_guard<mutex> lock(_sessions_mutex);
-                _sessions[client_fd] = session;
-                }
-                return true;
-            }//accept_async_session
 
         void WorkerThread() {
             while (!_stop) {
@@ -548,9 +350,10 @@ class IOCPServer {
                     continue;
                     }
 
+#ifdef _DEBUG
                 //显示数据，实际为"message\0\0\0..."
-                safe_print("Received from ", inet_ntoa(session->client_addr.sin_addr), ": ", session->buffer.data());
-
+                safe_print("pool thread ", get_id(), " received from ", inet_ntoa(session->client_addr.sin_addr), ": ", session->buffer.data());
+#endif
                 //识别字符判断是否关闭
                 if (string_view(session->buffer.data(), session->buffer.size()).substr(0, 5) == "close") {
                     safe_print("Received close command, shutting down server...");
@@ -644,33 +447,71 @@ class IOCPServer {
                 _iocp_handle = NULL;
                 }
             }//stop
-    private:
-        void test_connect() {
-#if 0//如果收不到客户端连接，用WSAWaitForMultipleEvents测试是否能接收
-            WSAEVENT hEvent = WSACreateEvent();
-            if (WSAEventSelect(_server_fd, hEvent, FD_ACCEPT) == SOCKET_ERROR) {
-                cerr << "WSAEventSelect failed: " << WSAGetLastError() << endl;
-                return;
-                }
-            if (WSAWaitForMultipleEvents(1, &hEvent, FALSE, 5000, FALSE) == WSA_WAIT_EVENT_0) {//超时前接收到则会打印
-                safe_print("New connection arrived (FD_ACCEPT)");
-                }
-            WSACloseEvent(hEvent);
-            safe_print("Server FD: ", _server_fd);
-#endif
 
-#if 0//如果收不到客户端连接，用select测试是否能接收
-            fd_set readSet;
-            FD_ZERO(&readSet);
-            FD_SET(_server_fd, &readSet);
-            timeval timeout = { 5, 0 }; // 5秒超时
-            if (select(0, &readSet, NULL, NULL, &timeout) > 0) {//超时前接收到则会打印
-                safe_print("select detected new connection");
-                }
-            else {
-                safe_print("select timeout");
-                }
+        //新连接事件
+        void post_accept(Session* session) {
+            SOCKET client_fd = session->socket;
+            sockaddr_in client_addr = session->client_addr;
+
+            // 解析 AcceptEx 缓冲区中的远程地址
+            sockaddr_in* remote_addr = reinterpret_cast<sockaddr_in*>(session->buffer.data() + sizeof(sockaddr_in) + 16);
+            session->client_addr = *remote_addr;
+
+            setsockopt(session->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&_server_fd, sizeof(_server_fd));
+            //重新关联客户端套接字到 IOCP（使用 Session* 作为 completion_key）
+            CreateIoCompletionPort((HANDLE)client_fd, _iocp_handle, (ULONG_PTR)session, 0);
+            safe_print("Get AcceptEx from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port));
+
+            //继续投递AcceptEx，保持并发
+            accept_async_session();
+
+            //投递
+            DWORD bytes = 0;
+            WSARecv(client_fd, &session->wsaBuf, 1, &bytes, &session->flags, &session->overlapped, NULL);
+        }//post_accept
+
+        //读事件
+        void post_recv(Session* session) {
+            //显示数据，实际为"message\0\0\0..."
+            safe_print("Received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
+#ifdef _DEBUG
+            //显示数据，实际为"message\0\0\0..."
+            safe_print("pool thread ", get_id(), " received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
 #endif
-            }//test_connect
+            //识别字符判断是否关闭
+            if (string_view(session->buffer.data(), session->buffer.size()).substr(0, 5) == "close") {
+                safe_print("Received close command, shutting down server...");
+                //发送fin包，若客户端已断开，会返回SOCKET_ERROR，且WSAGetLastError置为10053(WSAECONNABORTED)或10054(WSAECONNRESET)
+                //shutdown(session->socket, SD_SEND);
+
+                //关闭套接字，置为INVALID_SOCKET
+                closesocket(session->socket);
+                //之后WSASend/WSARecv会报错10058(WSAESOCKTNOSUPPORT)
+                stop();
+                return;
+            }
+        }//post_recv
+
+        //写事件
+        void post_send(Session* session) {
+            //修改数据
+            string response = "Hello from server!";
+            session->buffer.assign(response.begin(), response.end());
+            session->wsaBuf.buf = session->buffer.data();
+            session->wsaBuf.len = session->buffer.size();
+            ZeroMemory(&session->overlapped, sizeof(OVERLAPPED));
+
+            //发送数据
+            DWORD bytesSent = 0;
+            session->operation = Session::OP_SEND;
+            if (WSASend(session->socket, &session->wsaBuf, 1, &bytesSent, 0, &session->overlapped, NULL) == SOCKET_ERROR) {
+                if (WSAGetLastError() != WSA_IO_PENDING) {
+                    safe_print("WSASend failed: ", WSAGetLastError());
+                    closesocket(session->socket);
+                    return;
+                }
+            }
+        }//post_send
+
     };//IOCPServer
 #endif

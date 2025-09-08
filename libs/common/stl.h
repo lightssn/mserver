@@ -19,6 +19,8 @@
 
 using std::vector;
 using std::thread;
+using std::this_thread::get_id;
+
 using std::function;
 using std::future;
 using std::packaged_task;
