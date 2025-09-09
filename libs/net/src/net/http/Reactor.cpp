@@ -1,4 +1,5 @@
-﻿#include <stdexcept>
+﻿#ifdef __linux__
+#include <stdexcept>
 #include "my_json/core.h"
 #include <fmt/core.h>
 #include <protocol/http.h>
@@ -7,14 +8,8 @@
 #include <thread_pool.h>
 #include <thread_pool_simple.h>
 #include <thread_pool_qt.h>
-#ifdef WIN32
-#include <ws2tcpip.h>//InetPton
-#include "../../libs/net/IOCPSelector.h"
-#else
 #include <arpa/inet.h>
 #include <unistd.h>
-#define closesocket close
-#endif
 constexpr auto DEBUG = false;
 using namespace std;
 
@@ -86,10 +81,10 @@ Reactor::Reactor(const Config &cfg) : _config{cfg}, _handlers(MAX_FD), _rpc_func
     }//Reactor
 
 Reactor::~Reactor() {
-    closesocket(_server_fd);
+    close(_server_fd);
     for (int i = 0; i < _handlers.size(); ++i)
         if (_handlers[i] != nullptr)
-            closesocket(i);
+            close(i);
 #ifdef _WIN32
     if (WSACleanup() == SOCKET_ERROR) {
         throw runtime_error("WSACleanup failed. Error code: " + WSAGetLastError());
@@ -102,17 +97,13 @@ void Reactor::run() {
     auto lazy_current_time = chrono::steady_clock::now();
 
     //管理I/O事件对象，传入服务器套接字描述符和选择器大小
-#ifdef _WIN32
-    auto selector = IOCPSelector(_server_fd, _config.selector_size);
-#else
     auto selector = EpollSelector(_server_fd, _config.selector_size);
-#endif
 
     //lambda，关闭指定文件描述符对应的连接，包括释放处理程序、从选择器中注销和关闭套接字
     auto close_connection = [&](int fd) {
         _handlers[fd].reset();
         selector.unregister(fd);
-        closesocket(fd);
+        close(fd);
         };
 
     //lambda，添加新连接，注册到选择器读事件，创建处理程序
@@ -185,11 +176,7 @@ void Reactor::run() {
 
     //事件循环，从选择器中获取下一个事件并处理
     while (true) {
-#ifdef _WIN32
-        using EventTag = IOCPSelector::Event::Tag;
-#else
         using EventTag = EpollSelector::Event::Tag;
-#endif
         auto [tag, fd] = selector.get_next_event();
 
         //新连接事件
@@ -292,3 +279,4 @@ void Reactor::run() {
         }//while(true)
     }//run()
 } // namespace m::net::http
+#endif

@@ -50,10 +50,7 @@ class IOCPServer {
         atomic<bool> _stop;
     public:
         IOCPServer(int port) : _server_fd(INVALID_SOCKET), _iocp_handle(NULL), _pool(NUM_THREADS), _rpc_funcs{} {
-#ifdef _DEBUG
-            safe_print("server thread:", get_id());
-#endif
-            //初始化 Winsock
+            //初始化Winsock
             WSADATA wsaData;
             if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
                 throw runtime_error("WSAStartup failed.");
@@ -66,7 +63,7 @@ class IOCPServer {
                 throw runtime_error("socket failed.");
                 }
 
-            // 设置 SO_REUSEADDR 允许端口复用
+            //设置 SO_REUSEADDR允许端口复用
             int reuseAddr = 1;
             if (setsockopt(_server_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseAddr, sizeof(reuseAddr)) == SOCKET_ERROR) {
                 throw runtime_error("setsockopt failed.");
@@ -99,15 +96,6 @@ class IOCPServer {
                 throw runtime_error("Failed to associate listen socket with IOCP");
                 }
             //第三个参数替换为nullptr则不会识别套接字
-
-#ifdef USE_POOL
-            //_pool.submit([this] { WorkerThread(); });
-#else
-            //创建线程池
-            for (int i = 0; i < NUM_THREADS; ++i) {
-                _threads.emplace_back(&IOCPServer::WorkerThread, this);//立即执行，在工作函数里阻塞等待iocp事件
-                }
-#endif
             }//IOCPServer
 
         ~IOCPServer() {
@@ -139,7 +127,9 @@ class IOCPServer {
             }//rpc_register
 
         void run() {
-            cout << "Server started. Waiting for connections..." << endl;
+#ifdef _DEBUG
+            safe_print("thread ", get_id(), ": sever waiting for connections...");
+#endif
 
 #ifdef AYSNC_ACCEPT
             for (int i = 0; i < NUM_THREADS; ++i) {
@@ -153,62 +143,49 @@ class IOCPServer {
 #else //阻塞接收
                 accept_sync();
 #endif
-                _pool.submit([&, handlers = _handlers]() {
-                    //test_connect();//测试是否能连接
 
-                    DWORD bytes = 0;
-                    ULONG_PTR completion_key = 0;
-                    LPOVERLAPPED overlapped = nullptr;
-                    BOOL result = GetQueuedCompletionStatus(
-                                      _iocp_handle,
-                                      &bytes,/*客户端断开则=0*/
-                                      &completion_key,
-                                      &overlapped,
-                                      INFINITE /*设为0立即返回*/
-                                  );
+                Session* session = get_event();//阻塞取iocp事件
+				if (!session) continue;
 
-                    if (!result/* || bytes == 0*/) {
-                        // 客户端断开连接
-                        safe_print("Client disconnected");
-                        return;
-                    }
+                if (session->operation == Session::OP_SEND) {
+                    continue;  //忽略发送完成事件
+                }
+                if (session->operation == Session::OP_ACCEPT) {//新连接事件(AcceptEx完成)
+                    post_accept(session);
+                }
+                else {//WSARecv事件
+                    post_recv(session);
 
-                    //取出会话对象
-                    Session* session = CONTAINING_RECORD(overlapped, Session, overlapped);//用win api从成员变量地址反推对象地址
-                    //auto session = reinterpret_cast<Session*>(completion_key);//也有效，需在新连接事件重新关联iocp
-                    if (!session) return;
-
-                    if (session->operation == Session::OP_SEND) {
-                        return;  //忽略发送完成事件
-                    }
-
-                    if (bytes == 0) { //新连接事件(AcceptEx完成)
-                        post_accept(session);
-                    }
-                    else {//WSARecv/WSASend事件
-                        post_recv(session);
-
-                        //检查套接字内核事件队列，决定是否继续连接，有切换内核态开销，不可频繁使用，应用心跳
-                        WSANETWORKEVENTS events;
-                        if (WSAEnumNetworkEvents(session->socket, NULL, &events) == SOCKET_ERROR) {
-                            int err = WSAGetLastError();
-                            if (err == WSAENOTSOCK || err == WSAENOTCONN) {  // 连接已失效
-                                safe_print("Client disconnected (WSAError: ", err, ")");
-                                closesocket(session->socket);
-                                return;
-                            }
-                        }
-                        //检查客户端是否已发送rst触发FD_CLOSE
-                        if (events.lNetworkEvents & FD_CLOSE) {
-                            safe_print("Client gracefully closed connection");
+                    //检查套接字内核事件队列，决定是否继续连接，有切换内核态开销，不可频繁使用，应用心跳
+                    WSANETWORKEVENTS events;
+                    if (WSAEnumNetworkEvents(session->socket, NULL, &events) == SOCKET_ERROR) {
+                        int err = WSAGetLastError();
+                        if (err == WSAENOTSOCK || err == WSAENOTCONN) {  // 连接已失效
+                            safe_print("Client disconnected (WSAError: ", err, ")");
                             closesocket(session->socket);
-                            return;
+                            _sessions.erase(session->socket);
+                            continue;
                         }
-                        //getsockopt/select/WSASend都是内核缓冲区操作，不能及时检测
-
-                        post_send(session);
                     }
-                    });
+                    //检查客户端是否已发送rst触发FD_CLOSE
+                    if (events.lNetworkEvents & FD_CLOSE) {
+                        safe_print("Client gracefully closed connection");
+                        closesocket(session->socket);
+                        _sessions.erase(session->socket);
+                        continue;
+                    }
+                    //getsockopt/select/WSASend都是内核缓冲区操作，不能及时检测
+
+                    post_send(session);
+#ifdef USE_POOL
+                    //_pool.submit([&, handlers = _handlers]() {});
+#else
+                    //创建线程池
+                    for (int i = 0; i < NUM_THREADS; ++i) {
+                        _threads.emplace_back(&IOCPServer::WorkerThread, this);//立即执行
+                    }
+#endif
+                }
                 }//while (true)
             }//run
 
@@ -317,95 +294,6 @@ class IOCPServer {
             }
         }//accept_async_session
 
-        void WorkerThread() {
-            while (!_stop) {
-                DWORD bytes_transferred = 0;
-                ULONG_PTR completion_key = 0;
-                LPOVERLAPPED overlapped = nullptr;
-
-                //阻塞等待iocp事件(WSARecv/WSASend完成/客户端断开连接/手动投递事件PostQueuedCompletionStatus)
-                BOOL result = GetQueuedCompletionStatus(
-                                  _iocp_handle,
-                                  &bytes_transferred,/*客户端断开则=0*/
-                                  &completion_key,
-                                  &overlapped,
-                                  INFINITE /*设为0立即返回*/
-                              );
-                //BOOL是win api，S_OK=FALSE=0
-
-                auto session = reinterpret_cast<Session*>(completion_key);
-                if (!session) continue;
-
-                if (session->operation == Session::OP_SEND) {
-                    continue;  //忽略发送完成事件
-                    }
-
-                //判断客户端是否断开连接(暂时没测出有效性)
-                if (!result || bytes_transferred == 0) {
-                    if (session) {
-                        safe_print("Client disconnected: ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port));
-                        closesocket(session->socket);
-                        session->socket = INVALID_SOCKET;
-                        }
-                    continue;
-                    }
-
-#ifdef _DEBUG
-                //显示数据，实际为"message\0\0\0..."
-                safe_print("pool thread ", get_id(), " received from ", inet_ntoa(session->client_addr.sin_addr), ": ", session->buffer.data());
-#endif
-                //识别字符判断是否关闭
-                if (string_view(session->buffer.data(), session->buffer.size()).substr(0, 5) == "close") {
-                    safe_print("Received close command, shutting down server...");
-                    //发送fin包，若客户端已断开，会返回SOCKET_ERROR，且WSAGetLastError置为10053(WSAECONNABORTED)或10054(WSAECONNRESET)
-                    //shutdown(session->socket, SD_SEND);
-
-                    //关闭套接字，置为INVALID_SOCKET
-                    closesocket(session->socket);
-                    //之后WSASend/WSARecv会报错10058(WSAESOCKTNOSUPPORT)
-                    stop();
-                    return;
-                    }
-
-                //检查套接字内核事件队列，决定是否继续连接，有切换内核态开销，不可频繁使用，应用心跳
-                WSANETWORKEVENTS events;
-                if (WSAEnumNetworkEvents(session->socket, NULL, &events) == SOCKET_ERROR) {
-                    int err = WSAGetLastError();
-                    if (err == WSAENOTSOCK || err == WSAENOTCONN) {  // 连接已失效
-                        safe_print("Client disconnected (WSAError: ", err, ")");
-                        closesocket(session->socket);
-                        continue;
-                        }
-                    }
-                //检查客户端是否已发送rst触发FD_CLOSE
-                if (events.lNetworkEvents & FD_CLOSE) {
-                    safe_print("Client gracefully closed connection");
-                    closesocket(session->socket);
-                    continue;
-                    }
-                //getsockopt/select/WSASend都是内核缓冲区操作，不能及时检测
-
-                //修改数据
-                string response = "Hello from server!";
-                session->buffer.assign(response.begin(), response.end());
-                session->wsaBuf.buf = session->buffer.data();
-                session->wsaBuf.len = session->buffer.size();
-                ZeroMemory(&session->overlapped, sizeof(OVERLAPPED));
-
-                //发送数据
-                DWORD bytesSent = 0;
-                session->operation = Session::OP_SEND;
-                if (WSASend(session->socket, &session->wsaBuf, 1, &bytesSent, 0, &session->overlapped, NULL) == SOCKET_ERROR) {
-                    if (WSAGetLastError() != WSA_IO_PENDING) {
-                        safe_print("WSASend failed: ", WSAGetLastError());
-                        closesocket(session->socket);
-                        continue;
-                        }
-                    }
-                //WSASend的&session->overlapped替换为NULL则不会触发iocp事件
-                }//while (true)
-            }//work
-
         void stop() {
             if (_stop) return;
             _stop = true;
@@ -448,6 +336,38 @@ class IOCPServer {
                 }
             }//stop
 
+        //获取事件
+        Session* get_event() {
+            DWORD bytes = 0;
+            ULONG_PTR completion_key = 0;
+            LPOVERLAPPED overlapped = nullptr;
+            BOOL result = GetQueuedCompletionStatus(
+                _iocp_handle,
+                &bytes,/*客户端断开则=0*/
+                &completion_key,
+                &overlapped,
+                INFINITE /*设为0立即返回*/
+            );
+
+            if (!result || !overlapped) {
+                DWORD error = GetLastError();
+                // 客户端断开连接
+                safe_print("Client disconnected");
+                return nullptr;
+            }
+
+            //取出会话对象
+            Session* session = CONTAINING_RECORD(overlapped, Session, overlapped);//用win api从成员变量地址反推对象地址
+            //auto session = reinterpret_cast<Session*>(completion_key);//也有效，需在新连接事件重新关联iocp
+            if (bytes == 0) {//新连接
+                session->operation = Session::OP_ACCEPT;
+            }
+            //else {//数据到达
+            //    session->operation = Session::OP_RECV;
+            //}
+            return session;
+		}//get_event
+
         //新连接事件
         void post_accept(Session* session) {
             SOCKET client_fd = session->socket;
@@ -460,23 +380,22 @@ class IOCPServer {
             setsockopt(session->socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&_server_fd, sizeof(_server_fd));
             //重新关联客户端套接字到 IOCP（使用 Session* 作为 completion_key）
             CreateIoCompletionPort((HANDLE)client_fd, _iocp_handle, (ULONG_PTR)session, 0);
-            safe_print("Get AcceptEx from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port));
+            //safe_print("Get AcceptEx from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port));
 
             //继续投递AcceptEx，保持并发
             accept_async_session();
 
             //投递
             DWORD bytes = 0;
+            session->operation = Session::OP_RECV;
             WSARecv(client_fd, &session->wsaBuf, 1, &bytes, &session->flags, &session->overlapped, NULL);
         }//post_accept
 
         //读事件
         void post_recv(Session* session) {
-            //显示数据，实际为"message\0\0\0..."
-            safe_print("Received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
 #ifdef _DEBUG
             //显示数据，实际为"message\0\0\0..."
-            safe_print("pool thread ", get_id(), " received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
+            safe_print(/*"thread ", get_id(), ": ",*/ "received from ", inet_ntoa(session->client_addr.sin_addr), ":", ntohs(session->client_addr.sin_port), " : ", session->buffer.data());
 #endif
             //识别字符判断是否关闭
             if (string_view(session->buffer.data(), session->buffer.size()).substr(0, 5) == "close") {
@@ -486,6 +405,7 @@ class IOCPServer {
 
                 //关闭套接字，置为INVALID_SOCKET
                 closesocket(session->socket);
+                _sessions.erase(session->socket);
                 //之后WSASend/WSARecv会报错10058(WSAESOCKTNOSUPPORT)
                 stop();
                 return;
@@ -508,10 +428,10 @@ class IOCPServer {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     safe_print("WSASend failed: ", WSAGetLastError());
                     closesocket(session->socket);
+                    _sessions.erase(session->socket);
                     return;
                 }
             }
         }//post_send
-
     };//IOCPServer
 #endif
