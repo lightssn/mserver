@@ -56,7 +56,7 @@ class IOCPServer {
                 throw runtime_error("WSAStartup failed.");
                 }
 
-            //创建监听套接字
+            //创建服务端套接字
             _server_fd = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
             //_server_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (_server_fd == INVALID_SOCKET) {
@@ -190,7 +190,7 @@ class IOCPServer {
             }//run
 
     private:
-		//投递同步阻塞accept
+		//投递同步阻塞accept，弃用，未测试
         bool accept_sync() {
             sockaddr_in client_addr;
             socklen_t addrlen = sizeof(client_addr);
@@ -287,7 +287,7 @@ class IOCPServer {
                 }
             }
 
-            // 存储会话
+            //存储会话
             {
                 lock_guard<mutex> lock(_sessions_mutex);
                 _sessions[client_fd] = session;
@@ -297,22 +297,6 @@ class IOCPServer {
         void stop() {
             if (_stop) return;
             _stop = true;
-            //关闭服务器套接字
-            if (_server_fd != INVALID_SOCKET) {
-                closesocket(_server_fd);
-                _server_fd = INVALID_SOCKET;
-                }
-            //关闭所有客户端连接
-                {
-                lock_guard<mutex> lock(_sessions_mutex);
-                for (auto& pair : _sessions) {
-                    if (pair.second->socket != INVALID_SOCKET) {
-                        closesocket(pair.second->socket);
-                        pair.second->socket = INVALID_SOCKET;
-                        }
-                    }
-                _sessions.clear();
-                }
 
 #ifdef USE_POOL
             _pool.stop();
@@ -329,7 +313,23 @@ class IOCPServer {
                 }
             _threads.clear();
 #endif
-            //关闭IOCP句柄
+            //关闭服务器套接字
+            if (_server_fd != INVALID_SOCKET) {
+                closesocket(_server_fd);
+                _server_fd = INVALID_SOCKET;
+            }
+            //关闭所有客户端套接字
+            {
+                lock_guard<mutex> lock(_sessions_mutex);
+                for (auto& pair : _sessions) {
+                    if (pair.second->socket != INVALID_SOCKET) {
+                        closesocket(pair.second->socket);
+                        pair.second->socket = INVALID_SOCKET;
+                    }
+                }
+                _sessions.clear();
+            }
+            //关闭icop句柄
             if (_iocp_handle != NULL) {
                 CloseHandle(_iocp_handle);
                 _iocp_handle = NULL;
@@ -385,7 +385,7 @@ class IOCPServer {
             //继续投递AcceptEx，保持并发
             accept_async_session();
 
-            //投递
+            //投递读请求
             DWORD bytes = 0;
             session->operation = Session::OP_RECV;
             WSARecv(client_fd, &session->wsaBuf, 1, &bytes, &session->flags, &session->overlapped, NULL);
