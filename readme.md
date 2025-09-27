@@ -1,10 +1,10 @@
-### TODO
-win iocp
-OPENMP
+# C++17 RPC & Static Web Server
+C++17 静态网站与RPC服务器
+# 流程
 
-###  mserver 
-https://github.com/zixfy/SimpleWebServer
-https://zhuanlan.zhihu.com/p/662574190
+服务端：主线程通过异步I/O api（windows的iocp或linux的epoll）获取连接，将业务逻辑（解析请求、rpc/数据库操作、生成响应）分发到线程池异步处理，。
+
+
 单`Reactor`与工作线程池模型的静态网站服务端，支持长连接复用套接字，定时清除非活跃长连接
 ### Build
 apt install libgtest-dev libgmock-dev
@@ -16,7 +16,11 @@ mkdir build && cd build && cmake .. && make
 
 ### Example
 cd /mnt/f/code/mserver/out/build/WSL-GCC-Release/apps
-server/server http://127.0.0.1 1090 5
+server/server http://127.0.0.1 8888 5
+
+curl -X POST http://127.0.0.1:8888/rpc/echo -d '"hello world"' -H "Content-Type: application/json"
+
+curl -X POST http://127.0.0.1:8888/rpc/calculate -d '{"a":1.5,"b":2}' -H "Content-Type: application/json"
 
 经`Webbench`测试，设定工作线程数为`10`时，`QPS`可达`5.2w`左右。示例命令：
 cd /mnt/f/codeTest/c++Test/netTest/webbench
@@ -25,6 +29,10 @@ cd /mnt/f/codeTest/c++Test/netTest/webbench
 
 ### Others
 此外，还在`HTTP`协议之上对远程过程调用(`RPC`)功能提供了最小支持，使用静态反射宏的[序列化方案](https://github.com/zixfy/MyJson)，使用`std::function`进行注册函数多态
+
+### TODO
+win iocp
+OPENMP
 
 服务端函数注册:
 
@@ -79,3 +87,6 @@ or ./libs/thread/thread_pool_test
 home
 work 1780632
 
+# Reference
+https://github.com/zixfy/SimpleWebServer
+https://zhuanlan.zhihu.com/p/662574190
