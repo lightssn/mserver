@@ -120,6 +120,7 @@ class EpollSelector {
 
 // read -> work -> write
 class Handler {
+    public:
         constexpr static size_t READ_BUFFER_SIZE = 2048;
         sockaddr_in m_addr;
         string m_read_buffer;

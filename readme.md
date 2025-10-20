@@ -15,8 +15,9 @@ mkdir build && cd build && cmake .. && make
 其中`ip_address`为服务器局域网地址，`port_number`为监听端口，`threads_num`为工作线程数，`index_page_path`为网站根目录，默认为`/var/www/html`
 
 ### Example
-cd /mnt/f/code/mserver/out/build/WSL-GCC-Release/apps
-server/server http://127.0.0.1 8888 5
+cd F:\code\mserver\out\build\x64-Debug\apps\server
+cd /mnt/f/code/mserver/out/build/WSL-GCC-Release/apps/server
+./server http://127.0.0.1 8888 5
 
 curl -X POST http://127.0.0.1:8888/rpc/echo -d '"hello world"' -H "Content-Type: application/json"
 

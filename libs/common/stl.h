@@ -1,6 +1,7 @@
 #ifndef COMMON_STL_H
 #define COMMON_STL_H
 #include <iostream>
+#include <sstream>
 #include <array>
 #include <vector>
 #include <thread>
@@ -17,6 +18,7 @@
 #include <numeric>
 #include <stdexcept>
 
+using std::stringstream;
 using std::vector;
 using std::thread;
 using std::this_thread::get_id;

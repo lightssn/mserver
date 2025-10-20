@@ -30,7 +30,6 @@ int main(int argc, char *argv[]) {
     size_t working_thread_num;
 #ifndef NDEBUG
     ip = "http://127.0.0.1";
-    //port = 8080;
     port = 8888;
     working_thread_num = 5;
 #else
