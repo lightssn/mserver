@@ -1,5 +1,5 @@
 TODO
-实现自定义函数
+研究rpc_register应该怎么解析json
 合并两个服务器
 实现线程亲和性
 实现tcp udp https

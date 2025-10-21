@@ -365,9 +365,10 @@ class IOCPServer {
             if (bytes == 0) {//新连接
                 session->operation = Session::OP_ACCEPT;
                 }
-            //else {//数据到达
-            //    session->operation = Session::OP_RECV;
-            //}
+            else {//数据到达
+                //session->operation = Session::OP_RECV;
+                session->bytes_transferred = bytes;
+            }
             return session;
             }//get_event
 
@@ -412,8 +413,14 @@ class IOCPServer {
 
         //写事件
         void post_send(Session* session) {
-            //修改数据
-            string response = "Hello from server!";
+            //构造响应头
+            string response = _response_buffer.s;
+                //"HTTP/1.1 200 OK\r\n"
+                //"Content-Type: text/plain\r\n"
+                //"Content-Length: 17\r\n"
+                //"Connection: keep-alive\r\n"
+                //"\r\n"
+                //"Hello from server!";
             session->buffer.assign(response.begin(), response.end());
             session->wsaBuf.buf = session->buffer.data();
             session->wsaBuf.len = session->buffer.size();
@@ -460,7 +467,6 @@ class IOCPServer {
             string m_read_buffer = session->buffer.data();
             int m_read_index = session->bytes_transferred;
             auto state = _request_parser.update(string_view(m_read_buffer.data(), m_read_index));
-            return IOState::OK;//temp
             if (state == IOState::PENDING)
                 return IOState::PENDING;//请求数据不完整，直接返回
             else if (state == IOState::BAD)//请求格式错误
