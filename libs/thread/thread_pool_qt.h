@@ -1,13 +1,12 @@
+//qt线程池，有对象创建和事件循环开销
+//用USE_STL为1785780 pages/min
+//用QThread或QMutexLocker都会性能下降，都使用为1574628
 #ifndef THREAD_POOL_QT_DIRECT_H
 #define THREAD_POOL_QT_DIRECT_H
 #include <QThread>
 #include <QMutex>
 #include <QWaitCondition>
 #include "../common/stl.h"
-//#define USE_STL//1785780 pages/min
-//QThread性能下降，可能为事件循环、信号槽导致
-//QMutexLocker性能下降
-//都使用为1574628
 
 class ThreadPoolQt {
 #ifdef USE_STL

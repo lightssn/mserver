@@ -1,3 +1,4 @@
+//基于带锁链表的无锁线程池，新任务要堆分配，且链表缓存命中差
 #ifndef THREAD_POOL_H
 #define THREAD_POOL_H
 #include "../common/stl.h"
